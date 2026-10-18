@@ -71,7 +71,7 @@ function App() {
   }
   async function loadInbox(ownerId = cloudUser?.id) {
     if (!supabase || !ownerId) return
-    const { data, error } = await supabase.from('conversations').select('id, pet_id, created_at, pets(name), messages(id, sender_role, body, created_at, location_lat, location_lng, location_accuracy)').order('created_at', { ascending: false })
+    const { data, error } = await supabase.from('conversations').select('id, pet_id, created_at, expires_at, pets(name), messages(id, sender_role, body, created_at, location_lat, location_lng, location_accuracy)').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false })
     if (error) setInboxError(error.message); else setInbox(data || [])
   }
   const update = (key, value) => { setPet(current => ({ ...current, [key]: value })); setSaved(false) }

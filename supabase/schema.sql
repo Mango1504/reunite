@@ -24,8 +24,14 @@ create table if not exists public.conversations (
   pet_id uuid not null references public.pets(id) on delete cascade,
   owner_id uuid not null references auth.users(id) on delete cascade,
   finder_email text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '30 days')
 );
+
+alter table public.conversations add column if not exists expires_at timestamptz;
+alter table public.conversations alter column expires_at set default (now() + interval '30 days');
+update public.conversations set expires_at = created_at + interval '30 days' where expires_at is null;
+alter table public.conversations alter column expires_at set not null;
 
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
@@ -121,3 +127,26 @@ create policy "scanners and owners can send messages" on public.messages for ins
   with check (exists (select 1 from public.conversations c where c.id = conversation_id));
 
 alter publication supabase_realtime add table public.messages;
+
+-- Retain finder conversations for 30 days, then remove the conversation and its
+-- messages together through the existing ON DELETE CASCADE relationship.
+create or replace function public.delete_expired_reunite_conversations()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from public.conversations where expires_at <= now();
+$$;
+revoke all on function public.delete_expired_reunite_conversations() from public;
+
+-- Supabase projects include pg_cron. Run cleanup hourly without exposing a
+-- public RPC that could be abused to delete data.
+create extension if not exists pg_cron with schema extensions;
+do $$
+begin
+  if not exists (select 1 from cron.job where jobname = 'reunite-delete-expired-conversations') then
+    perform cron.schedule('reunite-delete-expired-conversations', '0 * * * *', 'select public.delete_expired_reunite_conversations();');
+  end if;
+end
+$$;
