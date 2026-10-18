@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import QRCode from 'qrcode'
 import { isCloudMode, supabase } from './lib/supabase'
 import './styles.css'
+import './retention.css'
 
 const seedPet = {
   id: 'pet_8f4a9c2e', name: 'Milo', breed: 'Golden Retriever', species: 'Dog',
@@ -48,7 +49,7 @@ function App() {
     if (screen === 'scan' && supabase) {
       const token = location.hash.replace(/^#\/pet\//, '')
       supabase.rpc('get_public_pet_v2', { p_token: token }).then(({ data }) => {
-        if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, photo: '🐕' }))
+        if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, publicPhoto: data[0].public_photo, publicNote: data[0].public_note, photo: data[0].photo_url || '🐕' }))
       })
     }
   }, [screen])
@@ -81,7 +82,7 @@ function App() {
       const query = pet._dbId ? supabase.from('pets').update(payload).eq('id', pet._dbId).select().single() : supabase.from('pets').insert(payload).select().single()
       const { data, error } = await query
       if (error) { setAuthError(error.message); return }
-      setPet(current => ({ ...current, ...data, id: data.public_token, _dbId: data.id, photo: '🐕' }))
+      setPet(current => ({ ...current, ...data, id: data.public_token, _dbId: data.id, photo: data.photo_url || current.photo || '🐕' }))
     }
     localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true)
   }
@@ -109,12 +110,25 @@ function App() {
     if (file.size > 5 * 1024 * 1024) { setAuthError('Please choose an image smaller than 5 MB.'); return }
     setAuthError('Uploading photo…')
     const extension = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const previousUrl = pet.photo_url
     const path = `${cloudUser.id}/${crypto.randomUUID()}.${extension}`
     const { error } = await supabase.storage.from('reunite-media').upload(path, file, { contentType: file.type, upsert: false })
     if (error) { setAuthError(error.message); return }
     const { data } = supabase.storage.from('reunite-media').getPublicUrl(path)
     const { error: updateError } = await supabase.from('pets').update({ photo_url: data.publicUrl }).eq('id', pet._dbId)
-    if (updateError) setAuthError(updateError.message); else { setPet(current => ({ ...current, photo_url: data.publicUrl, photo: data.publicUrl })); setAuthError('') }
+    if (updateError) setAuthError(updateError.message); else {
+      if (previousUrl?.includes('/storage/v1/object/public/reunite-media/')) {
+        const oldPath = decodeURIComponent(previousUrl.split('/storage/v1/object/public/reunite-media/')[1])
+        await supabase.storage.from('reunite-media').remove([oldPath])
+      }
+      setPet(current => ({ ...current, photo_url: data.publicUrl, photo: data.publicUrl })); setAuthError('')
+    }
+  }
+  const deleteData = async () => {
+    if (!supabase || !cloudUser) return
+    const { error } = await supabase.rpc('delete_my_reunite_data')
+    if (error) { setAuthError(error.message); return }
+    localStorage.removeItem('reunite-pet'); await supabase.auth.signOut(); setCloudUser(null); setPet(seedPet)
   }
   const openInbox = async () => { await loadInbox(); go('inbox') }
 
@@ -122,7 +136,7 @@ function App() {
   if (isCloudMode && cloudUser && needsPassword) return <SetPasswordPage submit={setInvitePassword} busy={authBusy} error={authError} />
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} busy={authBusy} error={authError} />
   if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} />
-  if (screen === 'edit') return <EditPage pet={pet} update={update} saveProfile={saveProfile} saved={saved} go={go} uploadPhoto={uploadPhoto} />
+  if (screen === 'edit') return <EditPage pet={pet} update={update} saveProfile={saveProfile} saved={saved} go={go} uploadPhoto={uploadPhoto} deleteData={deleteData} />
   return <Dashboard pet={pet} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} />
 }
 
@@ -163,8 +177,8 @@ function QRCard({ publicUrl }) {
 
 function Step({ n, title, text }) { return <div className="step"><span>{n}</span><div><h4>{title}</h4><p>{text}</p></div></div> }
 
-function EditPage({ pet, update, saveProfile, saved, go, uploadPhoto }) {
-  return <Shell go={go}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="photo-upload"><div className="photo-preview">{typeof pet.photo === 'string' && pet.photo.startsWith('http') ? <img src={pet.photo} alt={`${pet.name} profile`} /> : pet.photo}</div><div><label>Pet photo<input type="file" accept="image/*" onChange={e => uploadPhoto(e.target.files?.[0])} /></label><small>JPG, PNG or WEBP · max 5 MB</small></div></div><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form></main></Shell>
+function EditPage({ pet, update, saveProfile, saved, go, uploadPhoto, deleteData }) {
+  return <Shell go={go}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="photo-upload"><div className="photo-preview">{typeof pet.photo === 'string' && pet.photo.startsWith('http') ? <img src={pet.photo} alt={`${pet.name} profile`} /> : pet.photo}</div><div><label>Pet photo<input type="file" accept="image/*" onChange={e => uploadPhoto(e.target.files?.[0])} /></label><small>JPG, PNG or WEBP · max 5 MB</small></div></div><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form><div className="data-controls"><div><strong>Your data</strong><p>Conversations expire after 30 days. You can remove your pet profile and uploaded photos at any time.</p></div><button type="button" className="danger-btn" onClick={() => window.confirm('Delete your Reunite pet profile, conversations and uploaded photos? This cannot be undone.') && deleteData()}>Delete my data</button></div></main></Shell>
 }
 
 function ScanPage({ pet, message, setMessage, sent, setSent }) {

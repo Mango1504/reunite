@@ -107,6 +107,10 @@ begin
   end if;
   select * into v_pet from public.pets where public_token = p_token limit 1;
   if v_pet.id is null then raise exception 'Pet profile not found'; end if;
+  if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id
+      where c.pet_id = v_pet.id and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 10 then
+    raise exception 'This profile has reached its message limit for now. Please try again later.';
+  end if;
   insert into public.conversations (pet_id, owner_id)
     values (v_pet.id, v_pet.owner_id) returning id into v_conversation;
   insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy)
@@ -139,6 +143,21 @@ as $$
   delete from public.conversations where expires_at <= now();
 $$;
 revoke all on function public.delete_expired_reunite_conversations() from public;
+
+create or replace function public.delete_my_reunite_data()
+returns void
+language plpgsql
+security definer
+set search_path = public, storage
+as $$
+begin
+  if auth.uid() is null then raise exception 'You must be signed in'; end if;
+  delete from storage.objects where bucket_id = 'reunite-media' and owner_id = auth.uid();
+  delete from public.pets where owner_id = auth.uid();
+end;
+$$;
+revoke all on function public.delete_my_reunite_data() from public;
+grant execute on function public.delete_my_reunite_data() to authenticated;
 
 -- Supabase projects include pg_cron. Run cleanup hourly without exposing a
 -- public RPC that could be abused to delete data.

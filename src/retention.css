@@ -1,0 +1,4 @@
+.data-controls{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-top:38px;padding-top:22px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+.data-controls p{margin:6px 0 0;line-height:1.5}
+.danger-btn{border:1px solid #c9a7a0;background:#fff;color:var(--wine);padding:10px 14px;font-size:11px;white-space:nowrap}
+@media(max-width:700px){.data-controls{align-items:flex-start;flex-direction:column}.danger-btn{width:100%}}
