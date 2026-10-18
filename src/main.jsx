@@ -24,6 +24,8 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
+  const [inbox, setInbox] = useState([])
+  const [inboxError, setInboxError] = useState('')
 
   useEffect(() => { localStorage.setItem('reunite-pet', JSON.stringify(pet)) }, [pet])
   useEffect(() => {
@@ -38,10 +40,18 @@ function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       setCloudUser(session?.user ?? null)
       if (session?.user && (event === 'PASSWORD_RECOVERY' || isAuthCallback())) setNeedsPassword(true)
-      if (session?.user) loadCloudPet(session.user.id)
+      if (session?.user) { loadCloudPet(session.user.id); loadInbox(session.user.id) }
     })
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [])
+  useEffect(() => {
+    if (screen === 'scan' && supabase) {
+      const token = location.hash.replace(/^#\/pet\//, '')
+      supabase.rpc('get_public_pet', { p_token: token }).then(({ data }) => {
+        if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, photo: '🐕' }))
+      })
+    }
+  }, [screen])
   useEffect(() => {
     const onHash = () => setScreen(location.hash.startsWith('#/pet/') ? 'scan' : 'home')
     window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash)
@@ -53,6 +63,11 @@ function App() {
   async function loadCloudPet(ownerId) {
     const { data, error } = await supabase.from('pets').select('*').eq('owner_id', ownerId).order('created_at').limit(1).maybeSingle()
     if (!error && data) setPet({ ...data, id: data.public_token, _dbId: data.id, photo: '🐕' })
+  }
+  async function loadInbox(ownerId = cloudUser?.id) {
+    if (!supabase || !ownerId) return
+    const { data, error } = await supabase.from('conversations').select('id, pet_id, created_at, pets(name), messages(id, sender_role, body, created_at)').order('created_at', { ascending: false })
+    if (error) setInboxError(error.message); else setInbox(data || [])
   }
   const update = (key, value) => { setPet(current => ({ ...current, [key]: value })); setSaved(false) }
   const saveProfile = async () => {
@@ -83,12 +98,14 @@ function App() {
     setAuthBusy(false)
   }
   const signOut = async () => { await supabase?.auth.signOut(); setCloudUser(null) }
+  const openInbox = async () => { await loadInbox(); go('inbox') }
 
-  if (screen === 'scan') return <ScanPage pet={pet} publicUrl={publicUrl} message={message} setMessage={setMessage} sent={sent} setSent={setSent} />
+  if (screen === 'scan') return <ScanPage pet={pet} message={message} setMessage={setMessage} sent={sent} setSent={setSent} />
   if (isCloudMode && cloudUser && needsPassword) return <SetPasswordPage submit={setInvitePassword} busy={authBusy} error={authError} />
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} busy={authBusy} error={authError} />
+  if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} />
   if (screen === 'edit') return <EditPage pet={pet} update={update} saveProfile={saveProfile} saved={saved} go={go} />
-  return <Dashboard pet={pet} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} />
+  return <Dashboard pet={pet} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} />
 }
 
 function isAuthCallback() {
@@ -97,15 +114,15 @@ function isAuthCallback() {
 }
 
 function Shell({ children, go }) {
-  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">R</span><span>reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button onClick={() => go('edit')}>Pet profile</button><span className="avatar">RD</span></nav></header>{children}</div>
+  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">R</span><span>reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button onClick={() => go('inbox')}>Inbox</button><button onClick={() => go('edit')}>Pet profile</button><span className="avatar">RD</span></nav></header>{children}</div>
 }
 
-function Dashboard({ pet, publicUrl, go, cloudUser, signOut, cloudMode }) {
+function Dashboard({ pet, publicUrl, go, cloudUser, signOut, cloudMode, openInbox, inboxCount }) {
   return <Shell go={go}><main className="dashboard page"><div className="eyebrow">YOUR PET IDENTITY</div><div className="hero-row"><div><h1>A safer way<br /><em>home.</em></h1><p className="lead">A private digital identity for the pet you never want to lose.</p></div><div><div className="status-pill"><i /> {cloudMode ? 'Cloud profile active' : 'Demo profile active'}</div>{cloudUser && <button className="signout-btn" onClick={signOut}>Sign out</button>}</div></div>
     <section className="dashboard-grid"><article className="pet-card"><div className="pet-card-top"><div className="pet-avatar">{pet.photo}</div><div><div className="card-label">YOUR PET</div><h2>{pet.name}</h2><p>{pet.breed} · {pet.age}</p></div><button className="icon-btn" onClick={() => go('edit')} aria-label="Edit profile">↗</button></div><div className="privacy-row"><span><i className="lock">⌁</i> Private contact enabled</span><span className="online-dot">●</span></div></article>
     <QRCard publicUrl={publicUrl} />
     </section><section className="lower-grid"><div className="section-heading"><div><div className="eyebrow">A SIMPLE PROMISE</div><h3>Ready when it matters.</h3></div><button className="text-btn" onClick={() => go('edit')}>Manage profile <span>→</span></button></div><div className="steps"><Step n="01" title="Create" text="Keep the essentials in one trusted place."/><Step n="02" title="Attach" text="Print the QR or add it to any tag."/><Step n="03" title="Reconnect" text="A finder can reach you without seeing your details."/></div></section>
-    <div className="demo-note"><span>DEMO MODE</span> This prototype stores data only in this browser. Production accounts, encrypted storage and real messaging still need a backend.</div></main></Shell>
+    <div className="owner-actions"><button className="primary-btn" onClick={openInbox}>Open inbox {inboxCount ? `(${inboxCount})` : ''} <span>→</span></button><span>Messages from finders stay private in your account.</span></div><div className="demo-note"><span>PRIVATE MODE</span> Your pet profile and finder messages are stored securely in your Reunite account.</div></main></Shell>
 }
 
 function AuthPage({ authenticate, busy, error }) {
@@ -129,11 +146,20 @@ function QRCard({ publicUrl }) {
 function Step({ n, title, text }) { return <div className="step"><span>{n}</span><div><h4>{title}</h4><p>{text}</p></div></div> }
 
 function EditPage({ pet, update, saveProfile, saved, go }) {
-  return <Shell go={go}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form></main></Shell>
+  return <Shell go={go}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form></main></Shell>
 }
 
 function ScanPage({ pet, message, setMessage, sent, setSent }) {
-  return <div className="scan-page"><div className="scan-brand"><span className="brand-mark">R</span> reunite</div><main className="scan-main"><div className="scan-eyebrow"><span className="scan-dot" /> You found a pet profile</div><div className="scan-pet-avatar">{pet.photo}</div><h1>Meet {pet.name}.</h1><p className="scan-sub">{pet.publicPhoto ? `${pet.breed} · ${pet.age}` : 'A pet who may need a little help getting home.'}</p>{pet.publicNote && <div className="safety-note"><span>✦</span><div><strong>A note from their family</strong><p>{pet.note}</p></div></div>}<div className="owner-card"><div className="owner-initial">R</div><div><div className="card-label">THEIR PERSON</div><strong>@rishabh_reunite</strong><p>Contact is private and secure</p></div></div>{sent ? <div className="sent-state"><span>✓</span><div><strong>Message sent safely</strong><p>Their person will receive it in their Reunite inbox.</p></div></div> : <div className="message-box"><label htmlFor="message">Send a private message</label><textarea id="message" value={message} onChange={e => setMessage(e.target.value)} placeholder="Where did you find them?" /><button className="primary-btn wide" disabled={!message.trim()} onClick={() => setSent(true)}>Contact owner privately <span>→</span></button><small>Your email and phone number stay hidden.</small></div>}<p className="scan-foot">Powered by <strong>reunite</strong> · privacy first</p></main></div>
+  const [busy, setBusy] = useState(false); const [error, setError] = useState('')
+  const send = async () => { setBusy(true); setError(''); const token = location.hash.replace(/^#\/pet\//, ''); const result = supabase ? await supabase.rpc('send_public_message', { p_token: token, p_body: message.trim() }) : { error: null }; if (result.error) setError(result.error.message); else setSent(true); setBusy(false) }
+  return <div className="scan-page"><div className="scan-brand"><span className="brand-mark">R</span> reunite</div><main className="scan-main"><div className="scan-eyebrow"><span className="scan-dot" /> You found a pet profile</div><div className="scan-pet-avatar">{pet.photo}</div><h1>Meet {pet.name}.</h1><p className="scan-sub">{pet.publicPhoto ? `${pet.breed} · ${pet.age}` : 'A pet who may need a little help getting home.'}</p>{pet.missing && <div className="missing-banner">This pet has been marked missing. Please contact their person.</div>}{pet.publicNote && <div className="safety-note"><span>✦</span><div><strong>A note from their family</strong><p>{pet.note}</p></div></div>}<div className="owner-card"><div className="owner-initial">R</div><div><div className="card-label">THEIR PERSON</div><strong>@rishabh_reunite</strong><p>Contact is private and secure</p></div></div>{sent ? <div className="sent-state"><span>✓</span><div><strong>Message sent safely</strong><p>Their person will receive it in their Reunite inbox.</p></div></div> : <div className="message-box"><label htmlFor="message">Send a private message</label><textarea id="message" value={message} onChange={e => setMessage(e.target.value)} placeholder="Where did you find them?" maxLength="2000" />{error && <div className="auth-error">{error}</div>}<button className="primary-btn wide" disabled={!message.trim() || busy} onClick={send}>{busy ? 'Sending…' : 'Contact owner privately'} <span>→</span></button><small>Your email and phone number stay hidden.</small></div>}<p className="scan-foot">Powered by <strong>reunite</strong> · privacy first</p></main></div>
+}
+
+function InboxPage({ inbox, error, reload, go, supabase }) {
+  const [selected, setSelected] = useState(inbox[0] || null); const [reply, setReply] = useState(''); const [busy, setBusy] = useState(false)
+  useEffect(() => { if (!selected && inbox[0]) setSelected(inbox[0]) }, [inbox, selected])
+  const send = async () => { if (!reply.trim() || !selected) return; setBusy(true); await supabase.from('messages').insert({ conversation_id: selected.id, sender_role: 'owner', body: reply.trim() }); setReply(''); await reload(); setBusy(false) }
+  return <Shell go={go}><main className="page inbox-page"><div className="eyebrow">PRIVATE INBOX</div><div className="section-heading"><div><h3>Finder messages</h3><p className="lead">Reply without revealing your personal contact details.</p></div><button className="outline-btn" onClick={reload}>Refresh</button></div>{error && <div className="auth-error">{error}</div>}<div className="inbox-layout"><aside className="conversation-list">{inbox.length ? inbox.map(c => <button className={`conversation ${selected?.id === c.id ? 'active' : ''}`} onClick={() => setSelected(c)} key={c.id}><strong>{c.pets?.name || 'Your pet'}</strong><span>{new Date(c.created_at).toLocaleString()}</span><p>{c.messages?.[c.messages.length - 1]?.body || 'New message'}</p></button>) : <div className="empty-state">No finder messages yet.<br /><small>Messages sent from your pet’s QR page will appear here.</small></div>}</aside><section className="conversation-view">{selected ? <><div className="conversation-head"><div className="eyebrow">CONVERSATION</div><h3>{selected.pets?.name || 'Your pet'}</h3></div><div className="message-thread">{(selected.messages || []).sort((a,b) => new Date(a.created_at)-new Date(b.created_at)).map(m => <div className={`thread-message ${m.sender_role}`} key={m.id}><span>{m.sender_role === 'finder' ? 'Finder' : 'You'}</span><p>{m.body}</p><small>{new Date(m.created_at).toLocaleString()}</small></div>)}</div><div className="reply-box"><textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Write a reply…" maxLength="2000" /><button className="primary-btn" onClick={send} disabled={!reply.trim() || busy}>{busy ? 'Sending…' : 'Reply'}</button></div></> : <div className="empty-state">Select a conversation to read and reply.</div>}</section></div></main></Shell>
 }
 
 createRoot(document.getElementById('root')).render(<App />)

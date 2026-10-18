@@ -54,6 +54,33 @@ as $$
 $$;
 revoke all on function public.get_public_pet(text) from public;
 grant execute on function public.get_public_pet(text) to anon, authenticated;
+
+create or replace function public.send_public_message(p_token text, p_body text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_pet public.pets;
+  v_conversation uuid;
+  v_body text := btrim(coalesce(p_body, ''));
+begin
+  if char_length(v_body) < 1 or char_length(v_body) > 2000 then
+    raise exception 'Message must be between 1 and 2000 characters';
+  end if;
+  select * into v_pet from public.pets where public_token = p_token limit 1;
+  if v_pet.id is null then raise exception 'Pet profile not found'; end if;
+  insert into public.conversations (pet_id, owner_id)
+    values (v_pet.id, v_pet.owner_id) returning id into v_conversation;
+  insert into public.messages (conversation_id, sender_role, body)
+    values (v_conversation, 'finder', v_body);
+  return v_conversation;
+end;
+$$;
+revoke all on function public.send_public_message(text, text) from public;
+grant execute on function public.send_public_message(text, text) to anon, authenticated;
+
 create policy "owners can manage conversations" on public.conversations for all
   using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 create policy "scanners can start a conversation" on public.conversations for insert
