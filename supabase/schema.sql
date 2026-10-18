@@ -11,6 +11,7 @@ create table if not exists public.pets (
   breed text not null default '',
   age text not null default '',
   note text not null default '',
+  photo_url text,
   public_photo boolean not null default true,
   public_note boolean not null default true,
   missing boolean not null default false,
@@ -60,6 +61,28 @@ as $$
 $$;
 revoke all on function public.get_public_pet(text) from public;
 grant execute on function public.get_public_pet(text) to anon, authenticated;
+
+alter table public.pets add column if not exists photo_url text;
+insert into storage.buckets (id, name, public) values ('reunite-media', 'reunite-media', true) on conflict (id) do nothing;
+create policy "owners can upload pet photos" on storage.objects for insert to authenticated
+  with check (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "owners can update pet photos" on storage.objects for update to authenticated
+  using (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "public can view Reunite pet photos" on storage.objects for select to public
+  using (bucket_id = 'reunite-media');
+
+create or replace function public.get_public_pet_v2(p_token text)
+returns table (public_token text, name text, species text, breed text, age text, note text, public_photo boolean, public_note boolean, missing boolean, photo_url text)
+language sql security definer set search_path = public
+as $$
+  select p.public_token, p.name, p.species, p.breed, p.age,
+    case when p.public_note then p.note else '' end,
+    p.public_photo, p.public_note, p.missing,
+    case when p.public_photo then p.photo_url else null end
+  from public.pets p where p.public_token = p_token limit 1;
+$$;
+revoke all on function public.get_public_pet_v2(text) from public;
+grant execute on function public.get_public_pet_v2(text) to anon, authenticated;
 
 drop function if exists public.send_public_message(text, text);
 create or replace function public.send_public_message(p_token text, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
