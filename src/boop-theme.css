@@ -19,7 +19,7 @@ body:before{content:"";position:fixed;z-index:-1;inset:0;pointer-events:none;bac
 .brand{font-weight:700;color:var(--green)}
 .brand-mark{background:var(--boop-coral);box-shadow:0 5px 0 #d96e5d}
 .brand-mark{position:relative;border-radius:13px 13px 16px 9px;transform:rotate(-7deg);background:linear-gradient(145deg,var(--boop-coral),#f3a15e);color:#fff7e8}
-.brand-mark{display:none}
+.brand-mark{display:none!important}
 .brand-mark::after{font-weight:800;transform:rotate(7deg);text-shadow:1px 1px 0 rgba(131,61,46,.22)}
 .brand{position:relative}
 .brand::before,.brand::after{position:absolute;font-size:15px;line-height:1;pointer-events:none}
@@ -59,7 +59,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--boop-coral);box-shado
 .scan-page{background:var(--ivory)}
 .scan-brand .brand-mark{background:var(--boop-coral);box-shadow:0 5px 0 #d96e5d}
 .scan-brand .brand-mark{position:relative;border-radius:13px 13px 16px 9px;transform:rotate(-7deg);background:linear-gradient(145deg,var(--boop-coral),#f3a15e)}
-.scan-brand .brand-mark{display:none}
+.scan-brand .brand-mark{display:none!important}
 .scan-brand{position:relative}
 .scan-brand::before{content:'🐾';font-size:14px;margin-right:2px;transform:rotate(-12deg)}
 .scan-brand .brand-mark::before{content:'🐾';position:absolute;left:-16px;top:-10px;font-size:13px;transform:rotate(-12deg)}

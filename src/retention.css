@@ -5,13 +5,13 @@
 
 /* Brand rename: keep database/storage identifiers stable while updating the UI. */
 .brand>span:last-child{font-size:0}
-.brand>span:last-child::after{content:'boop';font-size:19px}
+.brand>span:last-child::after{content:'Boop';font-size:19px}
 .brand-mark{font-size:0}
 .brand-mark::after{content:'B';font-size:13px}
 .scan-brand{font-size:0}
 .scan-brand .brand-mark{font-size:0}
-.scan-brand::after{content:'boop';font-size:19px}
+.scan-brand::after{content:'Boop';font-size:19px}
 .qr-card .card-label{font-size:0}
 .qr-card .card-label::after{content:'YOUR BOOP QR';font-size:10px}
 .scan-foot strong{font-size:0}
-.scan-foot strong::after{content:'boop';font-size:11px}
+.scan-foot strong::after{content:'Boop';font-size:11px}
