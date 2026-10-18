@@ -31,8 +31,14 @@ create table if not exists public.messages (
   conversation_id uuid not null references public.conversations(id) on delete cascade,
   sender_role text not null check (sender_role in ('finder', 'owner')),
   body text not null check (char_length(body) between 1 and 2000),
+  location_lat double precision,
+  location_lng double precision,
+  location_accuracy double precision,
   created_at timestamptz not null default now()
 );
+alter table public.messages add column if not exists location_lat double precision;
+alter table public.messages add column if not exists location_lng double precision;
+alter table public.messages add column if not exists location_accuracy double precision;
 
 alter table public.pets enable row level security;
 alter table public.conversations enable row level security;
@@ -55,7 +61,8 @@ $$;
 revoke all on function public.get_public_pet(text) from public;
 grant execute on function public.get_public_pet(text) to anon, authenticated;
 
-create or replace function public.send_public_message(p_token text, p_body text)
+drop function if exists public.send_public_message(text, text);
+create or replace function public.send_public_message(p_token text, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
 returns uuid
 language plpgsql
 security definer
@@ -73,13 +80,13 @@ begin
   if v_pet.id is null then raise exception 'Pet profile not found'; end if;
   insert into public.conversations (pet_id, owner_id)
     values (v_pet.id, v_pet.owner_id) returning id into v_conversation;
-  insert into public.messages (conversation_id, sender_role, body)
-    values (v_conversation, 'finder', v_body);
+  insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy)
+    values (v_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
   return v_conversation;
 end;
 $$;
-revoke all on function public.send_public_message(text, text) from public;
-grant execute on function public.send_public_message(text, text) to anon, authenticated;
+revoke all on function public.send_public_message(text, text, double precision, double precision, double precision) from public;
+grant execute on function public.send_public_message(text, text, double precision, double precision, double precision) to anon, authenticated;
 
 create policy "owners can manage conversations" on public.conversations for all
   using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
