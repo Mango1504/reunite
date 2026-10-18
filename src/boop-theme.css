@@ -18,6 +18,12 @@ body:before{content:"";position:fixed;z-index:-1;inset:0;pointer-events:none;bac
 .topbar{height:82px;padding:0 6vw;border-bottom-color:rgba(234,223,208,.9);background:rgba(255,250,242,.78);backdrop-filter:blur(12px)}
 .brand{font-weight:700;color:var(--green)}
 .brand-mark{background:var(--boop-coral);box-shadow:0 5px 0 #d96e5d}
+.brand-mark{position:relative;border-radius:13px 13px 16px 9px;transform:rotate(-7deg);background:linear-gradient(145deg,var(--boop-coral),#f3a15e);color:#fff7e8}
+.brand-mark::after{font-weight:800;transform:rotate(7deg);text-shadow:1px 1px 0 rgba(131,61,46,.22)}
+.brand{position:relative}
+.brand::before,.brand::after{position:absolute;font-size:15px;line-height:1;pointer-events:none}
+.brand::before{content:'🐶';left:-25px;top:-9px;transform:rotate(-12deg)}
+.brand::after{content:'🐱';right:-27px;bottom:-8px;transform:rotate(12deg)}
 .topbar nav button{color:var(--green);font-weight:600}
 .topbar nav button:hover{color:var(--boop-coral)}
 .avatar{background:var(--boop-yellow);color:var(--green)}
@@ -51,6 +57,9 @@ input:focus,textarea:focus,select:focus{border-color:var(--boop-coral);box-shado
 .thread-message.owner{background:var(--boop-mint);border-color:#bdd9c1}
 .scan-page{background:var(--ivory)}
 .scan-brand .brand-mark{background:var(--boop-coral);box-shadow:0 5px 0 #d96e5d}
+.scan-brand .brand-mark{position:relative;border-radius:13px 13px 16px 9px;transform:rotate(-7deg);background:linear-gradient(145deg,var(--boop-coral),#f3a15e)}
+.scan-brand .brand-mark::before{content:'🐾';position:absolute;left:-16px;top:-10px;font-size:13px;transform:rotate(-12deg)}
+.scan-brand .brand-mark::after{font-weight:800;transform:rotate(7deg);text-shadow:1px 1px 0 rgba(131,61,46,.22)}
 .scan-pet-avatar{border:7px solid #fff;box-shadow:0 8px 0 rgba(210,174,81,.28)}
 .safety-note{border-radius:18px;background:#fff1d9;border:1px solid #f1d99f}
 .owner-card{border-radius:18px;box-shadow:0 8px 22px rgba(100,76,45,.06)}
