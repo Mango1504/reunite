@@ -63,6 +63,11 @@ function App() {
   async function loadCloudPet(ownerId) {
     const { data, error } = await supabase.from('pets').select('*').eq('owner_id', ownerId).order('created_at').limit(1).maybeSingle()
     if (!error && data) setPet({ ...data, id: data.public_token, _dbId: data.id, photo: '🐕' })
+    if (!error && !data) {
+      const { data: created, error: createError } = await supabase.from('pets').insert({ owner_id: ownerId, name: seedPet.name, species: seedPet.species, breed: seedPet.breed, age: seedPet.age, note: seedPet.note, public_photo: true, public_note: true, missing: false }).select().single()
+      if (!createError && created) setPet({ ...created, id: created.public_token, _dbId: created.id, photo: '🐕' })
+      if (createError) setAuthError(createError.message)
+    }
   }
   async function loadInbox(ownerId = cloudUser?.id) {
     if (!supabase || !ownerId) return
