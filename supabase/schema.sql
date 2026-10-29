@@ -89,7 +89,7 @@ begin
   join public.pets p on p.id = c.pet_id
   where c.id = new.conversation_id;
   if v_token is not null then
-    perform realtime.broadcast_changes('pet:' || v_token, 'message', 'INSERT', 'messages', 'public', new);
+    perform realtime.broadcast_changes('pet:' || v_token, 'message', 'INSERT', 'messages', 'public', new, null);
   end if;
   return new;
 end;
