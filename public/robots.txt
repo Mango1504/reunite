@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://reunite-9f9m.onrender.com/sitemap.xml

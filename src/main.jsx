@@ -183,6 +183,7 @@ function App() {
 
   if (screen === 'scan') return <ScanPage pet={pet} message={message} setMessage={setMessage} sent={sent} setSent={setSent} />
   if (isCloudMode && cloudUser && needsPassword) return <SetPasswordPage submit={setInvitePassword} busy={authBusy} error={authError} />
+  if (isCloudMode && !cloudUser && screen !== 'auth') return <LandingPage go={go} />
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} busy={authBusy} error={authError} />
   if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} />
   if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} />
@@ -192,6 +193,10 @@ function App() {
 function isAuthCallback() {
   const hash = decodeURIComponent(window.location.hash || '')
   return /(?:^|[&#?])type=(?:invite|recovery)(?:&|$)/i.test(hash)
+}
+
+function LandingPage({ go }) {
+  return <div className="landing-page"><header className="landing-nav"><div className="landing-brand"><span className="brand-mark">L</span><span>Leo Reunite</span></div><button className="outline-btn" onClick={() => go('auth')}>Sign in</button></header><main className="landing-main"><div className="landing-kicker">PRIVATE PET IDENTITY</div><h1>A safer way<br /><em>home.</em></h1><p className="landing-lead">Give your pet a secure digital identity that helps a finder reach you without exposing your personal details.</p><div className="landing-actions"><button className="primary-btn" onClick={() => go('auth')}>Create your pet profile <span>→</span></button><span>Free to get started</span></div><section className="landing-features"><article><span>01</span><h2>One simple scan</h2><p>A QR code opens a calm, private contact page for your pet.</p></article><article><span>02</span><h2>Private by design</h2><p>Finders can message you without seeing your email or phone number.</p></article><article><span>03</span><h2>Ready when needed</h2><p>Keep their photo, safety note, and missing status in one place.</p></article></section></main><footer className="landing-footer">Leo Reunite · A safer way home</footer></div>
 }
 
 function Shell({ children, go, inboxCount = 0 }) {
