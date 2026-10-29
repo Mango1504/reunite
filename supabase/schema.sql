@@ -25,12 +25,12 @@ create table if not exists public.conversations (
   owner_id uuid not null references auth.users(id) on delete cascade,
   finder_email text,
   created_at timestamptz not null default now(),
-  expires_at timestamptz not null default (now() + interval '30 days')
+  expires_at timestamptz not null default (now() + interval '24 hours')
 );
 
 alter table public.conversations add column if not exists expires_at timestamptz;
-alter table public.conversations alter column expires_at set default (now() + interval '30 days');
-update public.conversations set expires_at = created_at + interval '30 days' where expires_at is null;
+alter table public.conversations alter column expires_at set default (now() + interval '24 hours');
+update public.conversations set expires_at = created_at + interval '24 hours' where expires_at is null or expires_at > created_at + interval '24 hours';
 alter table public.conversations alter column expires_at set not null;
 alter table public.conversations add column if not exists finder_device_id text;
 

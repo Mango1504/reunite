@@ -27,9 +27,14 @@ function getFinderDeviceId(token) {
   const key = `leo-reunite-device:${token}`
   try {
     const existing = localStorage.getItem(key)
-    if (existing) return existing
+    if (existing) {
+      try {
+        const saved = JSON.parse(existing)
+        if (saved.id && saved.createdAt && Date.now() - saved.createdAt < 24 * 60 * 60 * 1000) return saved.id
+      } catch { if (existing.length >= 16) return existing }
+    }
     const created = crypto.randomUUID()
-    localStorage.setItem(key, created)
+    localStorage.setItem(key, JSON.stringify({ id: created, createdAt: Date.now() }))
     return created
   } catch { return crypto.randomUUID() }
 }
@@ -280,7 +285,7 @@ function PublicTextPage({ go, title, eyebrow, children }) {
 }
 
 function PrivacyPage({ go }) {
-  return <PublicTextPage go={go} title="Privacy, plainly." eyebrow="PRIVACY"><p>Leo Reunite stores the pet information you choose to provide so a finder can reach you through a private profile.</p><h2>What finders can see</h2><p>Only the fields you enable—such as a photo, breed, age, and safety note—appear on the public QR page. Your email and account details stay private.</p><h2>Messages and location</h2><p>Finder messages are delivered to your private inbox. Approximate location is shared only when the finder chooses it. Conversations are retained for up to 30 days to support reunion.</p><h2>Your control</h2><p>You can update or delete pet profiles and rotate QR links. To request help with your data, contact Leo Reunite through the support channel provided with your account.</p><p className="legal-note">This starter policy should be reviewed and adapted to your operating country before launch.</p></PublicTextPage>
+  return <PublicTextPage go={go} title="Privacy, plainly." eyebrow="PRIVACY"><p>Leo Reunite stores the pet information you choose to provide so a finder can reach you through a private profile.</p><h2>What finders can see</h2><p>Only the fields you enable—such as a photo, breed, age, and safety note—appear on the public QR page. Your email and account details stay private.</p><h2>Messages and location</h2><p>Finder messages are delivered to your private inbox. Approximate location is shared only when the finder chooses it. Conversations and finder sessions are automatically erased after 24 hours.</p><h2>Your control</h2><p>You can update or delete pet profiles and rotate QR links. To request help with your data, contact Leo Reunite through the support channel provided with your account.</p><p className="legal-note">This starter policy should be reviewed and adapted to your operating country before launch.</p></PublicTextPage>
 }
 
 function TermsPage({ go }) {
