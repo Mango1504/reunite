@@ -354,8 +354,16 @@ function ScanPage({ pet, message, setMessage, sent, setSent, reportPet }) {
       }
     }
     loadReplies()
-    const timer = window.setInterval(loadReplies, 5000)
-    return () => { active = false; window.clearInterval(timer) }
+    const channel = supabase.channel(`pet:${token}`)
+      .on('broadcast', { event: 'message' }, ({ payload }) => {
+        const incoming = payload?.record
+        if (!active || !incoming?.id) return
+        setReplies(current => current.some(item => item.id === incoming.id) ? current : [...current, incoming].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)))
+        if (incoming.sender_role === 'owner') supabase.rpc('mark_public_messages_seen', { p_token: token })
+      })
+      .subscribe()
+    const timer = window.setInterval(loadReplies, 30000)
+    return () => { active = false; window.clearInterval(timer); supabase.removeChannel(channel) }
   }, [])
   const shareLocation = () => { setLocBusy(true); setLocError(''); if (!navigator.geolocation) { setLocError('Location is not supported by this browser.'); setLocBusy(false); return } navigator.geolocation.getCurrentPosition(pos => { setCoords({ lat: Number(pos.coords.latitude.toFixed(3)), lng: Number(pos.coords.longitude.toFixed(3)), accuracy: pos.coords.accuracy }); setLocBusy(false) }, () => { setLocError('Location permission was denied. You can still send the message without it.'); setLocBusy(false) }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }) }
   const send = async () => { setBusy(true); setError(''); const token = location.hash.replace(/^#\/pet\//, ''); const result = supabase ? await supabase.rpc('send_public_message', { p_token: token, p_body: message.trim(), p_lat: coords?.lat ?? null, p_lng: coords?.lng ?? null, p_accuracy: coords?.accuracy ?? null }) : { error: null }; if (result.error) setError(result.error.message); else setSent(true); setBusy(false) }

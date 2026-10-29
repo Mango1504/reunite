@@ -75,6 +75,32 @@ drop trigger if exists ensure_message_delivery_status on public.messages;
 create trigger ensure_message_delivery_status
 before insert on public.messages
 for each row execute function public.ensure_message_delivery_status();
+create or replace function public.broadcast_reunite_message()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, realtime
+as $$
+declare
+  v_token text;
+begin
+  select p.public_token into v_token
+  from public.conversations c
+  join public.pets p on p.id = c.pet_id
+  where c.id = new.conversation_id;
+  if v_token is not null then
+    perform realtime.broadcast_changes('pet:' || v_token, 'message', 'INSERT', 'messages', 'public', new);
+  end if;
+  return new;
+end;
+$$;
+do $$
+begin
+  if not exists (select 1 from pg_trigger where tgname = 'broadcast_reunite_message' and tgrelid = 'public.messages'::regclass) then
+    create trigger broadcast_reunite_message after insert on public.messages for each row execute function public.broadcast_reunite_message();
+  end if;
+end
+$$;
 do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'messages_location_lat_valid') then
@@ -184,12 +210,12 @@ revoke all on function public.mark_public_messages_seen(text) from public;
 grant execute on function public.mark_public_messages_seen(text) to anon, authenticated;
 
 create or replace function public.get_public_messages(p_token text)
-returns table(sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
+returns table(id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
 language sql
 security definer
 set search_path = public
 as $$
-  select m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
+  select m.id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
   from public.messages m
   join public.conversations c on c.id = m.conversation_id
   join public.pets p on p.id = c.pet_id
