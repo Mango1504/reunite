@@ -1,0 +1,10 @@
+{
+  "name": "Leo Reunite",
+  "short_name": "Leo Reunite",
+  "description": "A safer way home for the pet you never want to lose.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffaf2",
+  "theme_color": "#fffaf2",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
