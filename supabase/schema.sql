@@ -59,6 +59,7 @@ alter table public.messages add column if not exists location_lat double precisi
 alter table public.messages add column if not exists location_lng double precision;
 alter table public.messages add column if not exists location_accuracy double precision;
 alter table public.messages add column if not exists delivered_at timestamptz not null default now();
+alter table public.messages alter column delivered_at set default now();
 alter table public.messages add column if not exists seen_at timestamptz;
 do $$
 begin
