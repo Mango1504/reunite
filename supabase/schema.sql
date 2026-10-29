@@ -213,6 +213,27 @@ $$;
 revoke all on function public.delete_my_reunite_pet(uuid) from public;
 grant execute on function public.delete_my_reunite_pet(uuid) to authenticated;
 
+create or replace function public.regenerate_pet_qr(p_pet_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_new_token text;
+begin
+  if auth.uid() is null then raise exception 'You must be signed in'; end if;
+  update public.pets
+    set public_token = encode(gen_random_bytes(12), 'hex')
+    where id = p_pet_id and owner_id = auth.uid()
+    returning public_token into v_new_token;
+  if v_new_token is null then raise exception 'Pet profile not found'; end if;
+  return v_new_token;
+end;
+$$;
+revoke all on function public.regenerate_pet_qr(uuid) from public;
+grant execute on function public.regenerate_pet_qr(uuid) to authenticated;
+
 -- Supabase projects include pg_cron. Run cleanup hourly without exposing a
 -- public RPC that could be abused to delete data.
 create extension if not exists pg_cron with schema extensions;

@@ -36,6 +36,8 @@ function App() {
   const [needsPassword, setNeedsPassword] = useState(false)
   const [inbox, setInbox] = useState([])
   const [inboxError, setInboxError] = useState('')
+  const [qrBusy, setQrBusy] = useState(false)
+  const [qrError, setQrError] = useState('')
 
   useEffect(() => {
     localStorage.setItem('reunite-pet', JSON.stringify(pet))
@@ -179,6 +181,22 @@ function App() {
     const remaining = pets.filter(item => (item._dbId || item.id) !== (pet._dbId || pet.id))
     setPets(remaining); setPet(remaining[0]); setSaved(false); setAuthError(''); localStorage.setItem('reunite-pets', JSON.stringify(remaining)); localStorage.setItem('reunite-pet', JSON.stringify(remaining[0])); go('home')
   }
+  const regenerateQr = async () => {
+    if (!window.confirm(`Replace ${pet.name}'s QR code? The current QR code and link will stop working.`)) return
+    setQrBusy(true); setQrError('')
+    let nextToken
+    if (supabase && cloudUser && pet._dbId) {
+      const { data, error } = await supabase.rpc('regenerate_pet_qr', { p_pet_id: pet._dbId })
+      if (error) { setQrError(error.message); setQrBusy(false); return }
+      nextToken = data
+    } else {
+      nextToken = `pet_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
+    }
+    const updated = { ...pet, id: nextToken, public_token: nextToken }
+    setPet(updated); setPets(current => current.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))
+    localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item)))
+    setQrBusy(false)
+  }
   const openInbox = async () => { await loadInbox(); go('inbox') }
 
   if (screen === 'scan') return <ScanPage pet={pet} message={message} setMessage={setMessage} sent={sent} setSent={setSent} />
@@ -187,7 +205,7 @@ function App() {
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} busy={authBusy} error={authError} />
   if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} />
   if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} />
-  return <Dashboard pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} toggleMissing={toggleMissing} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} />
+  return <Dashboard pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} toggleMissing={toggleMissing} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} />
 }
 
 function isAuthCallback() {
@@ -207,9 +225,9 @@ function PetVisual({ photo, name, className }) {
   return <span className={className}>{typeof photo === 'string' && photo.startsWith('http') ? <img src={photo} alt={`${name} profile`} /> : photo}</span>
 }
 
-function Dashboard({ pet, pets, selectPet, createPet, toggleMissing, publicUrl, go, cloudUser, signOut, inboxCount }) {
+function Dashboard({ pet, pets, selectPet, createPet, toggleMissing, publicUrl, go, cloudUser, signOut, inboxCount, regenerateQr, qrBusy, qrError }) {
   const [flipped, setFlipped] = useState(false)
-  return <Shell go={go} inboxCount={inboxCount}><main className="dashboard page"><section className="pet-switcher"><div className="pet-avatar-list">{pets.map(item => <button key={item._dbId || item.id} className={`pet-avatar-choice ${(item._dbId || item.id) === (pet._dbId || pet.id) ? 'selected' : ''}`} onClick={() => selectPet(item)}><PetVisual photo={item.photo} name={item.name} className="pet-picker-avatar" /><span>{item.name}</span></button>)}<button className="pet-avatar-choice add-avatar" onClick={createPet}><span className="pet-picker-avatar">＋</span><span>Create</span></button></div></section><section className="dashboard-grid"><article className={`pet-card flip-card ${flipped ? 'is-flipped' : ''}`}><div className="flip-card-inner"><section className="flip-face flip-front"><div className="pet-card-top"><PetVisual photo={pet.photo} name={pet.name} className="pet-avatar" /><div><div className="card-label">YOUR PET</div><h2>{pet.name}</h2><p>{pet.breed} · {pet.age}</p></div><button className="icon-btn" onClick={() => go('edit')} aria-label="Edit profile">↗</button></div>{pet.missing && <div className="missing-status">● Marked missing · finder contact is on</div>}<div className="finder-preview"><div className="card-label">FINDER SEES</div><p>{pet.publicPhoto ? 'Photo' : 'No photo'} · {pet.breed || 'Pet details'} · {pet.age || 'Age hidden'}{pet.publicNote && pet.note ? ` · ${pet.note}` : ''}</p></div><div className="privacy-row"><button className={`missing-toggle ${pet.missing ? 'active' : ''}`} onClick={toggleMissing}>{pet.missing ? '✓ Marked missing' : 'Mark as missing'}</button><button className="flip-hint" onClick={() => setFlipped(true)}>Show QR <span>↻</span></button></div></section><section className="flip-face flip-back"><QRCodePanel publicUrl={publicUrl} /><button className="flip-back-btn" onClick={() => setFlipped(false)}>← Back to profile</button></section></div></article></section><div className="dashboard-footer"><p>A safer way home.</p>{cloudUser && <button className="signout-btn" onClick={signOut}>Sign out</button>}</div></main></Shell>
+  return <Shell go={go} inboxCount={inboxCount}><main className="dashboard page"><section className="pet-switcher"><div className="pet-avatar-list">{pets.map(item => <button key={item._dbId || item.id} className={`pet-avatar-choice ${(item._dbId || item.id) === (pet._dbId || pet.id) ? 'selected' : ''}`} onClick={() => selectPet(item)}><PetVisual photo={item.photo} name={item.name} className="pet-picker-avatar" /><span>{item.name}</span></button>)}<button className="pet-avatar-choice add-avatar" onClick={createPet}><span className="pet-picker-avatar">＋</span><span>Create</span></button></div></section><section className="dashboard-grid"><article className={`pet-card flip-card ${flipped ? 'is-flipped' : ''}`}><div className="flip-card-inner"><section className="flip-face flip-front"><div className="pet-card-top"><PetVisual photo={pet.photo} name={pet.name} className="pet-avatar" /><div><div className="card-label">YOUR PET</div><h2>{pet.name}</h2><p>{pet.breed} · {pet.age}</p></div><button className="icon-btn" onClick={() => go('edit')} aria-label="Edit profile">↗</button></div>{pet.missing && <div className="missing-status">● Marked missing · finder contact is on</div>}<div className="finder-preview"><div className="card-label">FINDER SEES</div><p>{pet.publicPhoto ? 'Photo' : 'No photo'} · {pet.breed || 'Pet details'} · {pet.age || 'Age hidden'}{pet.publicNote && pet.note ? ` · ${pet.note}` : ''}</p></div><div className="privacy-row"><button className={`missing-toggle ${pet.missing ? 'active' : ''}`} onClick={toggleMissing}>{pet.missing ? '✓ Marked missing' : 'Mark as missing'}</button><button className="flip-hint" onClick={() => setFlipped(true)}>Show QR <span>↻</span></button></div></section><section className="flip-face flip-back"><QRCodePanel publicUrl={publicUrl} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} /><button className="flip-back-btn" onClick={() => setFlipped(false)}>← Back to profile</button></section></div></article></section><div className="dashboard-footer"><p>A safer way home.</p>{cloudUser && <button className="signout-btn" onClick={signOut}>Sign out</button>}</div></main></Shell>
 }
 
 function AuthPage({ authenticate, busy, error }) {
@@ -224,10 +242,10 @@ function SetPasswordPage({ submit, busy, error }) {
   return <div className="auth-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="auth-card"><div className="eyebrow">ACCOUNT ACTIVATION</div><h1>Set your password.</h1><p>Your invitation worked. Choose a password to finish setting up your Leo Reunite account.</p><form onSubmit={e => { e.preventDefault(); if (!mismatch) submit(password) }}><label>Password<input type="password" minLength="6" value={password} onChange={e => setPassword(e.target.value)} required /></label><label>Confirm password<input type="password" minLength="6" value={confirm} onChange={e => setConfirm(e.target.value)} required /></label>{mismatch && <div className="auth-error">The passwords do not match.</div>}{error && <div className="auth-error">{error}</div>}<button className="primary-btn wide" disabled={busy || mismatch}>{busy ? 'Saving…' : 'Finish account setup'} <span>→</span></button></form><small>Use at least 6 characters. Never share your password.</small></main></div>
 }
 
-function QRCodePanel({ publicUrl }) {
+function QRCodePanel({ publicUrl, regenerateQr, qrBusy, qrError }) {
   const [data, setData] = useState('')
   useEffect(() => { QRCode.toDataURL(publicUrl, { width: 220, margin: 1, color: { dark: '#20211f', light: '#ffffff' } }).then(setData) }, [publicUrl])
-  return <div className="qr-face-content"><div className="card-label">YOUR LEO REUNITE QR</div>{data ? <img className="qr" src={data} alt="QR code for the pet profile" /> : <div className="qr-placeholder">Generating…</div>}<p>Scan to view {publicUrl.includes('pet_') ? 'a safe contact page' : 'profile'}</p><div className="qr-actions"><a className="outline-btn" href={data} download="leo-reunite-pet-qr.png">Download QR</a><button className="outline-btn" onClick={() => navigator.clipboard?.writeText(publicUrl)}>Copy link</button></div></div>
+  return <div className="qr-face-content"><div className="card-label">YOUR LEO REUNITE QR</div>{data ? <img className="qr" src={data} alt="QR code for the pet profile" /> : <div className="qr-placeholder">Generating…</div>}<p>Scan to view {publicUrl.includes('pet_') ? 'a safe contact page' : 'profile'}</p><div className="qr-actions"><a className="outline-btn" href={data} download="leo-reunite-pet-qr.png">Download QR</a><button className="outline-btn" onClick={() => navigator.clipboard?.writeText(publicUrl)}>Copy link</button></div><button className="replace-qr-btn" type="button" onClick={regenerateQr} disabled={qrBusy}>{qrBusy ? 'Replacing QR…' : 'Replace QR'}</button>{qrError && <div className="qr-error">{qrError}</div>}</div>
 }
 
 function QRCard({ publicUrl }) { return <article className="qr-card"><QRCodePanel publicUrl={publicUrl} /></article> }
