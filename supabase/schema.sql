@@ -331,6 +331,27 @@ $$;
 revoke all on function public.get_public_messages_v3(text, text) from public;
 grant execute on function public.get_public_messages_v3(text, text) to anon, authenticated;
 
+create or replace function public.get_public_messages_v4(p_token text, p_device_id text, p_session_id text default null)
+returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_session_id is not null and p_session_id <> p_device_id then
+    update public.conversations set expires_at = now() where finder_device_id = p_session_id and exists (select 1 from public.pets p where p.id = pet_id and p.public_token = p_token) and expires_at > now();
+    return;
+  end if;
+  return query
+    select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
+    from public.messages m join public.conversations c on c.id = m.conversation_id join public.pets p on p.id = c.pet_id
+    where p.public_token = p_token and c.finder_device_id = p_device_id and c.expires_at > now()
+    order by m.created_at asc;
+end;
+$$;
+revoke all on function public.get_public_messages_v4(text, text, text) from public;
+grant execute on function public.get_public_messages_v4(text, text, text) to anon, authenticated;
+
 create or replace function public.report_public_pet(p_token text, p_reason text)
 returns void
 language plpgsql

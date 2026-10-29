@@ -39,6 +39,11 @@ function getFinderDeviceId(token) {
   } catch { return crypto.randomUUID() }
 }
 
+function getFinderRoute() {
+  const parts = location.hash.replace(/^#\/pet\//, '').split('/').filter(Boolean)
+  return { token: parts[0] || '', sessionId: parts[1] || null }
+}
+
 function App() {
   const [pets, setPets] = useState(loadPets)
   const [pet, setPet] = useState(() => pets[0] || seedPet)
@@ -80,7 +85,7 @@ function App() {
   }, [])
   useEffect(() => {
     if (screen === 'scan' && supabase) {
-      const token = location.hash.replace(/^#\/pet\//, '')
+      const { token } = getFinderRoute()
       supabase.rpc('get_public_pet_v2', { p_token: token }).then(({ data }) => {
         if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, publicPhoto: data[0].public_photo, publicNote: data[0].public_note, photo: data[0].photo_url || '🐕' }))
       })
@@ -237,7 +242,7 @@ function App() {
   const openInbox = async () => { await loadInbox(); go('inbox') }
   const sendFinderMessage = async ({ body, coords, conversationId, deviceId }) => {
     if (!supabase) return { data: null, error: new Error('Messaging is unavailable in demo mode.') }
-    const token = location.hash.replace(/^#\/pet\//, '')
+    const { token } = getFinderRoute()
     const fn = conversationId ? 'send_public_reply_v2' : 'send_public_message_v2'
     const args = conversationId
       ? { p_token: token, p_device_id: deviceId, p_conversation: conversationId, p_body: body, p_lat: coords?.lat ?? null, p_lng: coords?.lng ?? null, p_accuracy: coords?.accuracy ?? null }
@@ -248,7 +253,7 @@ function App() {
   }
   const reportPet = async reason => {
     if (!supabase) return new Error('Reporting is unavailable in demo mode.')
-    const token = location.hash.replace(/^#\/pet\//, '')
+    const { token } = getFinderRoute()
     const { error } = await supabase.rpc('report_public_pet', { p_token: token, p_reason: reason })
     return error || null
   }
@@ -367,17 +372,20 @@ function EditPage({ pet, pets, selectPet, createPet, update, saveProfile, saved,
 
 function ScanPageRealtime({ pet, message, setMessage, sent, setSent, sendFinderMessage, reportPet }) {
   const [messages, setMessages] = useState([]); const [conversationId, setConversationId] = useState(null); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [coords, setCoords] = useState(null); const [reportOpen, setReportOpen] = useState(false); const [reportReason, setReportReason] = useState(''); const [reportStatus, setReportStatus] = useState('')
-  const token = location.hash.replace(/^#\/pet\//, ''); const deviceId = useMemo(() => getFinderDeviceId(token), [token])
+  const { token, sessionId } = getFinderRoute(); const deviceId = useMemo(() => getFinderDeviceId(token), [token])
+  const sessionMismatch = Boolean(sessionId && sessionId !== deviceId)
   useEffect(() => {
     if (!supabase) return undefined
     let active = true
-    const load = async () => { const { data, error: loadError } = await supabase.rpc('get_public_messages_v3', { p_token: token, p_device_id: deviceId }); if (active && !loadError) { setMessages(data || []); const latest = (data || []).at(-1); if (latest?.conversation_id) { setConversationId(current => current || latest.conversation_id); setSent(true) } if ((data || []).some(item => item.sender_role === 'owner')) supabase.rpc('mark_public_messages_seen', { p_token: token }) } }
+    if (sessionMismatch) { setError('This finder session was opened on another device and has expired. Scan the pet QR again to start a new session.'); return undefined }
+    const load = async () => { const { data, error: loadError } = await supabase.rpc('get_public_messages_v4', { p_token: token, p_device_id: deviceId, p_session_id: sessionId }); if (active && !loadError) { setMessages(data || []); const latest = (data || []).at(-1); if (latest?.conversation_id) { setConversationId(current => current || latest.conversation_id); setSent(true) } if ((data || []).some(item => item.sender_role === 'owner')) supabase.rpc('mark_public_messages_seen', { p_token: token }) } }
     load()
     const channel = supabase.channel(`pet:${token}:${deviceId}`).on('broadcast', { event: 'message' }, ({ payload }) => { const incoming = payload?.record; if (!active || !incoming?.id) return; setMessages(current => current.some(item => item.id === incoming.id) ? current : [...current, incoming].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))); if (incoming.sender_role === 'owner') supabase.rpc('mark_public_messages_seen', { p_token: token }) }).subscribe()
     const timer = window.setInterval(load, 30000)
     return () => { active = false; window.clearInterval(timer); supabase.removeChannel(channel) }
-  }, [token, deviceId])
-  const send = async e => { e.preventDefault(); if (!message.trim()) return; setBusy(true); setError(''); const result = await sendFinderMessage({ body: message.trim(), coords, conversationId, deviceId }); if (result.error) setError(result.error.message); else { setConversationId(current => current || result.data); setMessage(''); setSent(true) } setBusy(false) }
+  }, [token, deviceId, sessionId, sessionMismatch])
+  useEffect(() => { if (sent && conversationId && !sessionId && !sessionMismatch) history.replaceState(null, '', `${location.pathname}#/pet/${token}/${deviceId}`) }, [sent, conversationId, sessionId, sessionMismatch, token, deviceId])
+  const send = async e => { e.preventDefault(); if (!message.trim() || sessionMismatch) return; setBusy(true); setError(''); const result = await sendFinderMessage({ body: message.trim(), coords, conversationId, deviceId }); if (result.error) setError(result.error.message); else { setConversationId(current => current || result.data); setMessage(''); setSent(true) } setBusy(false) }
   const report = async e => { e.preventDefault(); const result = await reportPet(reportReason.trim()); setReportStatus(result ? result.message : 'Report received. Thank you.'); if (!result) { setReportReason(''); setReportOpen(false) } }
   const shareLocation = () => navigator.geolocation?.getCurrentPosition(pos => setCoords({ lat: Number(pos.coords.latitude.toFixed(3)), lng: Number(pos.coords.longitude.toFixed(3)), accuracy: pos.coords.accuracy }))
   return <div className="scan-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="scan-main"><div className="scan-eyebrow"><span className="scan-dot" /> You found a pet profile</div><PetVisual photo={pet.publicPhoto ? pet.photo : '🐾'} name={pet.name} className="scan-pet-avatar" /><h1>Meet {pet.name}.</h1><p className="scan-sub">{pet.publicPhoto ? `${pet.breed} · ${pet.age}` : 'A pet who may need a little help getting home.'}</p>{pet.missing && <div className="missing-banner">This pet has been marked missing. Please contact their person.</div>}{pet.publicNote && <div className="safety-note"><span>✦</span><div><strong>A note from their family</strong><p>{pet.note}</p></div></div>}<div className="owner-card"><div className="owner-initial">L</div><div><div className="card-label">THEIR PERSON</div><strong>Leo Reunite member</strong><p>Contact is private and secure</p></div></div>{sent && <div className="finder-chat"><div className="card-label">PRIVATE CHAT</div><div className="finder-thread">{messages.length ? messages.map((item, index) => <div className={`finder-message ${item.sender_role}`} key={item.id || `${item.created_at}-${index}`}><p>{item.body}</p><small>{item.sender_role === 'owner' ? 'Their person' : 'You'} · {new Date(item.created_at).toLocaleString()}</small></div>) : <p className="finder-waiting">Your message was sent. Waiting for a reply…</p>}</div></div>}<form className="message-box finder-composer" onSubmit={send}><label htmlFor="message">{sent ? 'Continue the conversation' : 'Send a private message'}</label><textarea id="message" value={message} onChange={e => setMessage(e.target.value)} placeholder="Where did you find them?" maxLength="2000" />{coords && <small className="location-attached">✓ Approximate location attached</small>}<div className="finder-compose-actions"><button type="button" className="location-btn" onClick={shareLocation}>＋ Share location</button><button className="primary-btn" disabled={!message.trim() || busy}>{busy ? 'Sending…' : sent ? 'Send message' : 'Contact owner privately'} <span>→</span></button></div>{error && <div className="auth-error">{error}</div>}<small>Your contact details stay hidden. Messages update instantly on both sides.</small></form><div className="report-area">{reportStatus ? <div className="report-success">✓ {reportStatus}</div> : reportOpen ? <form className="report-form" onSubmit={report}><label htmlFor="report-reason">What looks wrong with this profile?</label><textarea id="report-reason" value={reportReason} onChange={e => setReportReason(e.target.value)} maxLength="500" required /><div className="report-actions"><button type="button" className="outline-btn" onClick={() => setReportOpen(false)}>Cancel</button><button className="primary-btn">Send report</button></div></form> : <button type="button" className="text-btn" onClick={() => setReportOpen(true)}>Report this profile</button>}</div><p className="scan-foot">Leo Reunite · <strong>A safer way home</strong></p></main></div>
