@@ -332,6 +332,7 @@ function applyTheme(mode) {
 function AccountDrawer({ open, close, go, inboxCount, theme, setTheme }) {
   useEffect(() => {
     if (!open) return undefined
+    document.querySelector('.account-drawer .drawer-close')?.focus()
     const closeOnOutside = event => { if (event.target.closest?.('.account-drawer') || event.target.closest?.('.avatar-button')) return; close() }
     document.addEventListener('pointerdown', closeOnOutside)
     return () => document.removeEventListener('pointerdown', closeOnOutside)
