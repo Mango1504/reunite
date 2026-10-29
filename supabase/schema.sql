@@ -224,7 +224,7 @@ declare
 begin
   if auth.uid() is null then raise exception 'You must be signed in'; end if;
   update public.pets
-    set public_token = encode(gen_random_bytes(12), 'hex')
+    set public_token = replace(gen_random_uuid()::text, '-', '')
     where id = p_pet_id and owner_id = auth.uid()
     returning public_token into v_new_token;
   if v_new_token is null then raise exception 'Pet profile not found'; end if;
