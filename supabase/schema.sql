@@ -61,6 +61,20 @@ alter table public.messages add column if not exists location_accuracy double pr
 alter table public.messages add column if not exists delivered_at timestamptz not null default now();
 alter table public.messages alter column delivered_at set default now();
 alter table public.messages add column if not exists seen_at timestamptz;
+create or replace function public.ensure_message_delivery_status()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.delivered_at := coalesce(new.delivered_at, now());
+  return new;
+end;
+$$;
+drop trigger if exists ensure_message_delivery_status on public.messages;
+create trigger ensure_message_delivery_status
+before insert on public.messages
+for each row execute function public.ensure_message_delivery_status();
 do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'messages_location_lat_valid') then
