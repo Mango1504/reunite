@@ -298,7 +298,48 @@ function TermsPage({ go }) {
 }
 
 function Shell({ children, go, inboxCount = 0, feedback, dismissFeedback }) {
-  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">L</span><span>Leo Reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button className="inbox-nav" onClick={() => go('inbox')}>Inbox{inboxCount ? <b>{inboxCount}</b> : null}</button><button onClick={() => go('edit')}>Pet profile</button><span className="avatar">RD</span></nav></header><FeedbackToast feedback={feedback} onDismiss={dismissFeedback} />{children}</div>
+  const [accountOpen, setAccountOpen] = useState(false)
+  const [theme, setTheme] = useState(getSavedTheme)
+  useEffect(() => {
+    applyTheme(theme)
+    try { localStorage.setItem('leo-theme', theme) } catch {}
+    if (theme !== 'auto') return undefined
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    const syncSystemTheme = () => applyTheme('auto')
+    media?.addEventListener?.('change', syncSystemTheme)
+    return () => media?.removeEventListener?.('change', syncSystemTheme)
+  }, [theme])
+  useEffect(() => {
+    if (!accountOpen) return undefined
+    const closeOnEscape = event => { if (event.key === 'Escape') setAccountOpen(false) }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [accountOpen])
+  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">L</span><span>Leo Reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button className="inbox-nav" onClick={() => go('inbox')}>Inbox{inboxCount ? <b>{inboxCount}</b> : null}</button><button onClick={() => go('edit')}>Pet profile</button><button className="avatar avatar-button" onClick={() => setAccountOpen(true)} aria-label="Open account menu" aria-expanded={accountOpen}>RD</button></nav></header><AccountDrawer open={accountOpen} close={() => setAccountOpen(false)} go={go} inboxCount={inboxCount} theme={theme} setTheme={setTheme} /><FeedbackToast feedback={feedback} onDismiss={dismissFeedback} />{children}</div>
+}
+
+function getSavedTheme() {
+  try { return ['light', 'dark', 'auto'].includes(localStorage.getItem('leo-theme')) ? localStorage.getItem('leo-theme') : 'auto' } catch { return 'auto' }
+}
+
+function applyTheme(mode) {
+  const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+  const resolved = mode === 'auto' ? (media?.matches ? 'dark' : 'light') : mode
+  document.documentElement.dataset.theme = resolved
+  document.documentElement.style.colorScheme = resolved
+}
+
+function AccountDrawer({ open, close, go, inboxCount, theme, setTheme }) {
+  useEffect(() => {
+    if (!open) return undefined
+    const closeOnOutside = event => { if (event.target.closest?.('.account-drawer') || event.target.closest?.('.avatar-button')) return; close() }
+    document.addEventListener('pointerdown', closeOnOutside)
+    return () => document.removeEventListener('pointerdown', closeOnOutside)
+  }, [open, close])
+  if (!open) return null
+  const navigate = next => { close(); go(next) }
+  const logout = async () => { await supabase?.auth.signOut(); close(); history.replaceState(null, '', location.pathname) }
+  return <><div className="drawer-scrim" aria-hidden="true" /><aside className="account-drawer" role="dialog" aria-modal="true" aria-label="Account menu"><div className="drawer-header"><div><div className="eyebrow">ACCOUNT</div><h2>Leo Reunite</h2><p>Your private pet identity</p></div><button className="drawer-close" onClick={close} aria-label="Close account menu">×</button></div><div className="drawer-profile"><span className="drawer-avatar">RD</span><div><strong>Owner account</strong><span>Manage your safe home</span></div></div><div className="drawer-section"><div className="drawer-section-label">QUICK ACCESS</div><button className="drawer-link" onClick={() => navigate('home')}><span>⌂</span><span>Dashboard</span></button><button className="drawer-link" onClick={() => navigate('inbox')}><span>✉</span><span>Inbox{inboxCount ? <b className="drawer-count">{inboxCount}</b> : null}</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('edit')}><span>✎</span><span>Pet profile settings</span><span className="drawer-arrow">›</span></button></div><div className="drawer-section"><div className="drawer-section-label">APPEARANCE</div><div className="theme-picker"><button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>Light</button><button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>Dark</button><button className={theme === 'auto' ? 'selected' : ''} onClick={() => setTheme('auto')}>Auto</button></div><small className="drawer-hint">Auto follows your device preference.</small></div><div className="drawer-section drawer-secondary"><button className="drawer-link" onClick={() => navigate('privacy')}><span>⌕</span><span>Privacy</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('terms')}><span>▤</span><span>Terms</span><span className="drawer-arrow">›</span></button></div><div className="drawer-footer"><button className="drawer-logout" onClick={logout}>Log out <span>→</span></button><small>Leo Reunite · A safer way home</small></div></aside></>
 }
 
 function FeedbackToast({ feedback, onDismiss }) {
