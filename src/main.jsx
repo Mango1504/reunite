@@ -184,13 +184,19 @@ function App() {
   const regenerateQr = async () => {
     if (!window.confirm(`Replace ${pet.name}'s QR code? The current QR code and link will stop working.`)) return
     setQrBusy(true); setQrError('')
-    let nextToken
+    const fallbackToken = () => `pet_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
+    let nextToken = null
     if (supabase && cloudUser && pet._dbId) {
       const { data, error } = await supabase.rpc('regenerate_pet_qr', { p_pet_id: pet._dbId })
-      if (error) { setQrError(error.message); setQrBusy(false); return }
-      nextToken = data
+      if (!error && data) nextToken = data
+      if (error && !/regenerate_pet_qr|schema cache|PGRST202/i.test(error.message || '')) { setQrError(error.message); setQrBusy(false); return }
+      if (!nextToken) {
+        nextToken = fallbackToken()
+        const { error: updateError } = await supabase.from('pets').update({ public_token: nextToken }).eq('id', pet._dbId).eq('owner_id', cloudUser.id)
+        if (updateError) { setQrError(updateError.message); setQrBusy(false); return }
+      }
     } else {
-      nextToken = `pet_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
+      nextToken = fallbackToken()
     }
     const updated = { ...pet, id: nextToken, public_token: nextToken }
     setPet(updated); setPets(current => current.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))
