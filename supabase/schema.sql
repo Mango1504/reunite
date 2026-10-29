@@ -184,6 +184,35 @@ $$;
 revoke all on function public.delete_my_reunite_data() from public;
 grant execute on function public.delete_my_reunite_data() to authenticated;
 
+create or replace function public.delete_my_reunite_pet(p_pet_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, storage
+as $$
+declare
+  v_photo_url text;
+  v_photo_path text;
+begin
+  if auth.uid() is null then raise exception 'You must be signed in'; end if;
+  select photo_url into v_photo_url
+  from public.pets
+  where id = p_pet_id and owner_id = auth.uid();
+  if v_photo_url is null then
+    delete from public.pets where id = p_pet_id and owner_id = auth.uid();
+    return;
+  end if;
+  v_photo_path := regexp_replace(v_photo_url, '^.*/storage/v1/object/public/reunite-media/', '');
+  delete from storage.objects
+    where bucket_id = 'reunite-media'
+      and name = v_photo_path
+      and (storage.foldername(name))[1] = auth.uid()::text;
+  delete from public.pets where id = p_pet_id and owner_id = auth.uid();
+end;
+$$;
+revoke all on function public.delete_my_reunite_pet(uuid) from public;
+grant execute on function public.delete_my_reunite_pet(uuid) to authenticated;
+
 -- Supabase projects include pg_cron. Run cleanup hourly without exposing a
 -- public RPC that could be abused to delete data.
 create extension if not exists pg_cron with schema extensions;
