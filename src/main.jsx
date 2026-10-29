@@ -39,6 +39,7 @@ function App() {
   const [qrBusy, setQrBusy] = useState(false)
   const [qrError, setQrError] = useState('')
   const [feedback, setFeedback] = useState(null)
+  const [profileDirty, setProfileDirty] = useState(false)
   const notify = (type, text) => setFeedback({ type, text, id: Date.now() })
 
   useEffect(() => {
@@ -76,7 +77,7 @@ function App() {
   }, [])
 
   const publicUrl = `${location.origin}${location.pathname}#/pet/${pet.id}`
-  const go = (next) => { if (next === 'scan') location.hash = `/pet/${pet.id}`; else { history.replaceState(null, '', location.pathname); setScreen(next) } }
+  const go = (next) => { if (screen === 'edit' && profileDirty && next !== 'edit' && !window.confirm('You have unsaved changes. Leave without saving?')) return; if (next === 'scan') location.hash = `/pet/${pet.id}`; else { history.replaceState(null, '', location.pathname); setScreen(next) } }
 
   async function loadCloudPet(ownerId) {
     const { data, error } = await supabase.from('pets').select('*').eq('owner_id', ownerId).order('created_at')
@@ -103,18 +104,18 @@ function App() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [cloudUser?.id])
-  const selectPet = (nextPet) => { setPet(nextPet); setSaved(false); if (screen === 'scan') location.hash = `/pet/${nextPet.id}` }
+  const selectPet = (nextPet) => { setPet(nextPet); setSaved(false); setProfileDirty(false); if (screen === 'scan') location.hash = `/pet/${nextPet.id}` }
   const createPet = async () => {
     if (!supabase || !cloudUser) {
       const nextPet = { ...seedPet, id: `pet_${crypto.randomUUID().slice(0, 8)}`, name: 'New pet', breed: '', age: '' }
-      setPets(current => [...current, nextPet]); setPet(nextPet); setScreen('edit'); return
+      setPets(current => [...current, nextPet]); setPet(nextPet); setProfileDirty(false); setScreen('edit'); return
     }
     const { data, error } = await supabase.from('pets').insert({ owner_id: cloudUser.id, name: 'New pet', species: 'Dog', breed: '', age: '', note: '', public_photo: true, public_note: true, missing: false }).select().single()
     if (error) { setAuthError(error.message); notify('error', 'The pet profile could not be created.'); return }
     const nextPet = { ...data, id: data.public_token, _dbId: data.id, photo: '🐕', publicPhoto: data.public_photo, publicNote: data.public_note }
-    setPets(current => [...current, nextPet]); setPet(nextPet); setScreen('edit'); notify('success', 'Pet profile created.')
+    setPets(current => [...current, nextPet]); setPet(nextPet); setProfileDirty(false); setScreen('edit'); notify('success', 'Pet profile created.')
   }
-  const update = (key, value) => { setPet(current => ({ ...current, [key]: value })); setSaved(false) }
+  const update = (key, value) => { setPet(current => ({ ...current, [key]: value })); setSaved(false); setProfileDirty(true) }
   const saveProfile = async () => {
     if (supabase && cloudUser) {
       const payload = { owner_id: cloudUser.id, name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, note: pet.note, public_photo: pet.publicPhoto, public_note: pet.publicNote, missing: pet.missing, photo_url: pet.photo_url || null }
@@ -126,7 +127,7 @@ function App() {
     } else {
       setPets(current => current.map(item => item.id === pet.id ? pet : item))
     }
-    localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true); notify('success', 'Pet profile saved.')
+    localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true); setProfileDirty(false); notify('success', 'Pet profile saved.')
   }
   const toggleMissing = async () => {
     const updated = { ...pet, missing: !pet.missing }
