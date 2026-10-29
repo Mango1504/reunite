@@ -297,7 +297,7 @@ function InboxPageWithTicks({ inbox, error, reload, go, supabase, feedback, dism
   const send = async () => {
     if (!reply.trim() || !selected) return
     setBusy(true); setSendError('')
-    const { error: insertError } = await supabase.from('messages').insert({ conversation_id: selected.id, sender_role: 'owner', body: reply.trim() })
+    const { error: insertError } = await supabase.from('messages').insert({ conversation_id: selected.id, sender_role: 'owner', body: reply.trim(), delivered_at: null })
     if (insertError) { setSendError(insertError.message); setBusy(false); return }
     setReply(''); await reload(); setBusy(false)
   }

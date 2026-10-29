@@ -148,7 +148,8 @@ security definer
 set search_path = public
 as $$
   update public.messages m
-    set seen_at = coalesce(m.seen_at, now())
+    set delivered_at = coalesce(m.delivered_at, now()),
+        seen_at = coalesce(m.seen_at, now())
     where m.sender_role = 'owner'
       and exists (
         select 1 from public.conversations c
