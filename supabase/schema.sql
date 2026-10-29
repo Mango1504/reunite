@@ -41,11 +41,27 @@ create table if not exists public.messages (
   location_lat double precision,
   location_lng double precision,
   location_accuracy double precision,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint messages_location_lat_valid check (location_lat is null or location_lat between -90 and 90),
+  constraint messages_location_lng_valid check (location_lng is null or location_lng between -180 and 180),
+  constraint messages_location_accuracy_valid check (location_accuracy is null or location_accuracy >= 0)
 );
 alter table public.messages add column if not exists location_lat double precision;
 alter table public.messages add column if not exists location_lng double precision;
 alter table public.messages add column if not exists location_accuracy double precision;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'messages_location_lat_valid') then
+    alter table public.messages add constraint messages_location_lat_valid check (location_lat is null or location_lat between -90 and 90);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'messages_location_lng_valid') then
+    alter table public.messages add constraint messages_location_lng_valid check (location_lng is null or location_lng between -180 and 180);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'messages_location_accuracy_valid') then
+    alter table public.messages add constraint messages_location_accuracy_valid check (location_accuracy is null or location_accuracy >= 0);
+  end if;
+end
+$$;
 
 alter table public.pets enable row level security;
 alter table public.conversations enable row level security;
@@ -123,12 +139,21 @@ grant execute on function public.send_public_message(text, text, double precisio
 
 create policy "owners can manage conversations" on public.conversations for all
   using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
-create policy "scanners can start a conversation" on public.conversations for insert
-  with check (true);
+drop policy if exists "scanners can start a conversation" on public.conversations;
+drop policy if exists "scanners and owners can send messages" on public.messages;
+drop policy if exists "conversation participants can read messages" on public.messages;
+drop policy if exists "owners can send replies" on public.messages;
 create policy "conversation participants can read messages" on public.messages for select
   using (exists (select 1 from public.conversations c where c.id = conversation_id and c.owner_id = auth.uid()));
-create policy "scanners and owners can send messages" on public.messages for insert
-  with check (exists (select 1 from public.conversations c where c.id = conversation_id));
+create policy "owners can send replies" on public.messages for insert
+  with check (sender_role = 'owner' and exists (
+    select 1 from public.conversations c where c.id = conversation_id and c.owner_id = auth.uid()
+  ));
+
+create index if not exists conversations_owner_created_idx
+  on public.conversations (owner_id, created_at desc);
+create index if not exists messages_conversation_created_idx
+  on public.messages (conversation_id, created_at);
 
 alter publication supabase_realtime add table public.messages;
 

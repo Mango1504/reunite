@@ -2,16 +2,3 @@
 .data-controls p{margin:6px 0 0;line-height:1.5}
 .danger-btn{border:1px solid #c9a7a0;background:#fff;color:var(--wine);padding:10px 14px;font-size:11px;white-space:nowrap}
 @media(max-width:700px){.data-controls{align-items:flex-start;flex-direction:column}.danger-btn{width:100%}}
-
-/* Brand rename: keep database/storage identifiers stable while updating the UI. */
-.brand>span:last-child{font-size:0}
-.brand>span:last-child::after{content:'Boop';font-size:19px}
-.brand-mark{font-size:0}
-.brand-mark::after{content:'B';font-size:13px}
-.scan-brand{font-size:0}
-.scan-brand .brand-mark{font-size:0}
-.scan-brand::after{content:'Boop';font-size:19px}
-.qr-card .card-label{font-size:0}
-.qr-card .card-label::after{content:'YOUR BOOP QR';font-size:10px}
-.scan-foot strong{font-size:0}
-.scan-foot strong::after{content:'Boop';font-size:11px}
