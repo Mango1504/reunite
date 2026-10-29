@@ -183,6 +183,23 @@ $$;
 revoke all on function public.mark_public_messages_seen(text) from public;
 grant execute on function public.mark_public_messages_seen(text) to anon, authenticated;
 
+create or replace function public.get_public_messages(p_token text)
+returns table(sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
+language sql
+security definer
+set search_path = public
+as $$
+  select m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
+  from public.messages m
+  join public.conversations c on c.id = m.conversation_id
+  join public.pets p on p.id = c.pet_id
+  where p.public_token = p_token
+    and c.expires_at > now()
+  order by m.created_at asc;
+$$;
+revoke all on function public.get_public_messages(text) from public;
+grant execute on function public.get_public_messages(text) to anon, authenticated;
+
 create or replace function public.report_public_pet(p_token text, p_reason text)
 returns void
 language plpgsql
