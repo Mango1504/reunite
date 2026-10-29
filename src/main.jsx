@@ -38,6 +38,8 @@ function App() {
   const [inboxError, setInboxError] = useState('')
   const [qrBusy, setQrBusy] = useState(false)
   const [qrError, setQrError] = useState('')
+  const [feedback, setFeedback] = useState(null)
+  const notify = (type, text) => setFeedback({ type, text, id: Date.now() })
 
   useEffect(() => {
     localStorage.setItem('reunite-pet', JSON.stringify(pet))
@@ -107,9 +109,9 @@ function App() {
       setPets(current => [...current, nextPet]); setPet(nextPet); setScreen('edit'); return
     }
     const { data, error } = await supabase.from('pets').insert({ owner_id: cloudUser.id, name: 'New pet', species: 'Dog', breed: '', age: '', note: '', public_photo: true, public_note: true, missing: false }).select().single()
-    if (error) { setAuthError(error.message); return }
+    if (error) { setAuthError(error.message); notify('error', 'The pet profile could not be created.'); return }
     const nextPet = { ...data, id: data.public_token, _dbId: data.id, photo: '🐕', publicPhoto: data.public_photo, publicNote: data.public_note }
-    setPets(current => [...current, nextPet]); setPet(nextPet); setScreen('edit')
+    setPets(current => [...current, nextPet]); setPet(nextPet); setScreen('edit'); notify('success', 'Pet profile created.')
   }
   const update = (key, value) => { setPet(current => ({ ...current, [key]: value })); setSaved(false) }
   const saveProfile = async () => {
@@ -117,13 +119,13 @@ function App() {
       const payload = { owner_id: cloudUser.id, name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, note: pet.note, public_photo: pet.publicPhoto, public_note: pet.publicNote, missing: pet.missing, photo_url: pet.photo_url || null }
       const query = pet._dbId ? supabase.from('pets').update(payload).eq('id', pet._dbId).select().single() : supabase.from('pets').insert(payload).select().single()
       const { data, error } = await query
-      if (error) { setAuthError(error.message); return }
+      if (error) { setAuthError(error.message); notify('error', 'Your profile could not be saved.'); return }
       const updated = { ...data, id: data.public_token, _dbId: data.id, photo: data.photo_url || pet.photo || '🐕', publicPhoto: data.public_photo, publicNote: data.public_note }
       setPet(updated); setPets(current => current.map(item => item._dbId === updated._dbId ? updated : item))
     } else {
       setPets(current => current.map(item => item.id === pet.id ? pet : item))
     }
-    localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true)
+    localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true); notify('success', 'Pet profile saved.')
   }
   const toggleMissing = async () => {
     const updated = { ...pet, missing: !pet.missing }
@@ -131,7 +133,10 @@ function App() {
     localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item)))
     if (supabase && cloudUser && pet._dbId) {
       const { error } = await supabase.from('pets').update({ missing: updated.missing }).eq('id', pet._dbId)
-      if (error) setAuthError(error.message)
+      if (error) { setAuthError(error.message); notify('error', 'Missing status could not be updated.') }
+      else notify('success', updated.missing ? 'Marked as missing.' : 'Marked as safe.')
+    } else {
+      notify('success', updated.missing ? 'Marked as missing.' : 'Marked as safe.')
     }
   }
   const authenticate = async (mode, email, password) => {
@@ -161,25 +166,25 @@ function App() {
     const previousUrl = pet.photo_url
     const path = `${cloudUser.id}/${crypto.randomUUID()}.${extension}`
     const { error } = await supabase.storage.from('reunite-media').upload(path, file, { contentType: file.type, upsert: false })
-    if (error) { setAuthError(error.message); return }
+    if (error) { setAuthError(error.message); notify('error', 'The photo could not be uploaded.'); return }
     const { data } = supabase.storage.from('reunite-media').getPublicUrl(path)
     const { error: updateError } = await supabase.from('pets').update({ photo_url: data.publicUrl }).eq('id', pet._dbId)
-    if (updateError) setAuthError(updateError.message); else {
+    if (updateError) { setAuthError(updateError.message); notify('error', 'The photo could not be saved.'); } else {
       if (previousUrl?.includes('/storage/v1/object/public/reunite-media/')) {
         const oldPath = decodeURIComponent(previousUrl.split('/storage/v1/object/public/reunite-media/')[1])
         await supabase.storage.from('reunite-media').remove([oldPath])
       }
-      setPet(current => ({ ...current, photo_url: data.publicUrl, photo: data.publicUrl })); setAuthError('')
+      setPet(current => ({ ...current, photo_url: data.publicUrl, photo: data.publicUrl })); setAuthError(''); notify('success', 'Pet photo updated.')
     }
   }
   const deletePet = async () => {
     if (pets.length <= 1) { setAuthError('Keep at least one pet profile in your account.'); return }
     if (supabase && cloudUser && pet._dbId) {
       const { error } = await supabase.rpc('delete_my_reunite_pet', { p_pet_id: pet._dbId })
-      if (error) { setAuthError(error.message); return }
+      if (error) { setAuthError(error.message); notify('error', 'The profile could not be deleted.'); return }
     }
     const remaining = pets.filter(item => (item._dbId || item.id) !== (pet._dbId || pet.id))
-    setPets(remaining); setPet(remaining[0]); setSaved(false); setAuthError(''); localStorage.setItem('reunite-pets', JSON.stringify(remaining)); localStorage.setItem('reunite-pet', JSON.stringify(remaining[0])); go('home')
+    setPets(remaining); setPet(remaining[0]); setSaved(false); setAuthError(''); localStorage.setItem('reunite-pets', JSON.stringify(remaining)); localStorage.setItem('reunite-pet', JSON.stringify(remaining[0])); go('home'); notify('success', 'Pet profile deleted.')
   }
   const regenerateQr = async () => {
     if (!window.confirm(`Replace ${pet.name}'s QR code? The current QR code and link will stop working.`)) return
@@ -201,7 +206,7 @@ function App() {
     const updated = { ...pet, id: nextToken, public_token: nextToken }
     setPet(updated); setPets(current => current.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))
     localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item)))
-    setQrBusy(false)
+    setQrBusy(false); notify('success', 'New QR ready. The old one no longer works.')
   }
   const openInbox = async () => { await loadInbox(); go('inbox') }
 
@@ -209,9 +214,9 @@ function App() {
   if (isCloudMode && cloudUser && needsPassword) return <SetPasswordPage submit={setInvitePassword} busy={authBusy} error={authError} />
   if (isCloudMode && !cloudUser && screen !== 'auth') return <LandingPage go={go} />
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} busy={authBusy} error={authError} />
-  if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} />
-  if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} />
-  return <Dashboard pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} toggleMissing={toggleMissing} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} />
+  if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
+  if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
+  return <Dashboard pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} toggleMissing={toggleMissing} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
 }
 
 function isAuthCallback() {
@@ -223,17 +228,27 @@ function LandingPage({ go }) {
   return <div className="landing-page"><header className="landing-nav"><div className="landing-brand"><span className="brand-mark">L</span><span>Leo Reunite</span></div><button className="outline-btn" onClick={() => go('auth')}>Sign in</button></header><main className="landing-main"><div className="landing-kicker">PRIVATE PET IDENTITY</div><h1>A safer way<br /><em>home.</em></h1><p className="landing-lead">Give your pet a secure digital identity that helps a finder reach you without exposing your personal details.</p><div className="landing-actions"><button className="primary-btn" onClick={() => go('auth')}>Create your pet profile <span>→</span></button><span>Free to get started</span></div><section className="landing-features"><article><span>01</span><h2>One simple scan</h2><p>A QR code opens a calm, private contact page for your pet.</p></article><article><span>02</span><h2>Private by design</h2><p>Finders can message you without seeing your email or phone number.</p></article><article><span>03</span><h2>Ready when needed</h2><p>Keep their photo, safety note, and missing status in one place.</p></article></section></main><footer className="landing-footer">Leo Reunite · A safer way home</footer></div>
 }
 
-function Shell({ children, go, inboxCount = 0 }) {
-  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">L</span><span>Leo Reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button className="inbox-nav" onClick={() => go('inbox')}>Inbox{inboxCount ? <b>{inboxCount}</b> : null}</button><button onClick={() => go('edit')}>Pet profile</button><span className="avatar">RD</span></nav></header>{children}</div>
+function Shell({ children, go, inboxCount = 0, feedback, dismissFeedback }) {
+  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">L</span><span>Leo Reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button className="inbox-nav" onClick={() => go('inbox')}>Inbox{inboxCount ? <b>{inboxCount}</b> : null}</button><button onClick={() => go('edit')}>Pet profile</button><span className="avatar">RD</span></nav></header><FeedbackToast feedback={feedback} onDismiss={dismissFeedback} />{children}</div>
+}
+
+function FeedbackToast({ feedback, onDismiss }) {
+  useEffect(() => {
+    if (!feedback) return undefined
+    const timer = setTimeout(onDismiss, 3500)
+    return () => clearTimeout(timer)
+  }, [feedback, onDismiss])
+  if (!feedback) return null
+  return <div className={`feedback-toast ${feedback.type}`} role="status" aria-live="polite"><span className="feedback-icon">{feedback.type === 'success' ? '✓' : '!'}</span><span>{feedback.text}</span><button type="button" onClick={onDismiss} aria-label="Dismiss notification">×</button></div>
 }
 
 function PetVisual({ photo, name, className }) {
   return <span className={className}>{typeof photo === 'string' && photo.startsWith('http') ? <img src={photo} alt={`${name} profile`} /> : photo}</span>
 }
 
-function Dashboard({ pet, pets, selectPet, createPet, toggleMissing, publicUrl, go, cloudUser, signOut, inboxCount, regenerateQr, qrBusy, qrError }) {
+function Dashboard({ pet, pets, selectPet, createPet, toggleMissing, publicUrl, go, cloudUser, signOut, inboxCount, regenerateQr, qrBusy, qrError, feedback, dismissFeedback }) {
   const [flipped, setFlipped] = useState(false)
-  return <Shell go={go} inboxCount={inboxCount}><main className="dashboard page"><section className="pet-switcher"><div className="pet-avatar-list">{pets.map(item => <button key={item._dbId || item.id} className={`pet-avatar-choice ${(item._dbId || item.id) === (pet._dbId || pet.id) ? 'selected' : ''}`} onClick={() => selectPet(item)}><PetVisual photo={item.photo} name={item.name} className="pet-picker-avatar" /><span>{item.name}</span></button>)}<button className="pet-avatar-choice add-avatar" onClick={createPet}><span className="pet-picker-avatar">＋</span><span>Create</span></button></div></section><section className="dashboard-grid"><article className={`pet-card flip-card ${flipped ? 'is-flipped' : ''}`}><div className="flip-card-inner"><section className="flip-face flip-front"><div className="pet-card-top"><PetVisual photo={pet.photo} name={pet.name} className="pet-avatar" /><div><div className="card-label">YOUR PET</div><h2>{pet.name}</h2><p>{pet.breed} · {pet.age}</p></div><button className="icon-btn" onClick={() => go('edit')} aria-label="Edit profile">↗</button></div>{pet.missing && <div className="missing-status">● Marked missing · finder contact is on</div>}<div className="finder-preview"><div className="card-label">FINDER SEES</div><p>{pet.publicPhoto ? 'Photo' : 'No photo'} · {pet.breed || 'Pet details'} · {pet.age || 'Age hidden'}{pet.publicNote && pet.note ? ` · ${pet.note}` : ''}</p></div><div className="privacy-row"><button className={`missing-toggle ${pet.missing ? 'active' : ''}`} onClick={toggleMissing}>{pet.missing ? '✓ Marked missing' : 'Mark as missing'}</button><button className="flip-hint" onClick={() => setFlipped(true)}>Show QR <span>↻</span></button></div></section><section className="flip-face flip-back"><QRCodePanel publicUrl={publicUrl} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} /><button className="flip-back-btn" onClick={() => setFlipped(false)}>← Back to profile</button></section></div></article></section><div className="dashboard-footer"><p>A safer way home.</p>{cloudUser && <button className="signout-btn" onClick={signOut}>Sign out</button>}</div></main></Shell>
+  return <Shell go={go} inboxCount={inboxCount} feedback={feedback} dismissFeedback={dismissFeedback}><main className="dashboard page"><section className="pet-switcher"><div className="pet-avatar-list">{pets.map(item => <button key={item._dbId || item.id} className={`pet-avatar-choice ${(item._dbId || item.id) === (pet._dbId || pet.id) ? 'selected' : ''}`} onClick={() => selectPet(item)}><PetVisual photo={item.photo} name={item.name} className="pet-picker-avatar" /><span>{item.name}</span></button>)}<button className="pet-avatar-choice add-avatar" onClick={createPet}><span className="pet-picker-avatar">＋</span><span>Create</span></button></div></section><section className="dashboard-grid"><article className={`pet-card flip-card ${flipped ? 'is-flipped' : ''}`}><div className="flip-card-inner"><section className="flip-face flip-front"><div className="pet-card-top"><PetVisual photo={pet.photo} name={pet.name} className="pet-avatar" /><div><div className="card-label">YOUR PET</div><h2>{pet.name}</h2><p>{pet.breed} · {pet.age}</p></div><button className="icon-btn" onClick={() => go('edit')} aria-label="Edit profile">↗</button></div>{pet.missing && <div className="missing-status">● Marked missing · finder contact is on</div>}<div className="finder-preview"><div className="card-label">FINDER SEES</div><p>{pet.publicPhoto ? 'Photo' : 'No photo'} · {pet.breed || 'Pet details'} · {pet.age || 'Age hidden'}{pet.publicNote && pet.note ? ` · ${pet.note}` : ''}</p></div><div className="privacy-row"><button className={`missing-toggle ${pet.missing ? 'active' : ''}`} onClick={toggleMissing}>{pet.missing ? '✓ Marked missing' : 'Mark as missing'}</button><button className="flip-hint" onClick={() => setFlipped(true)}>Show QR <span>↻</span></button></div></section><section className="flip-face flip-back"><QRCodePanel publicUrl={publicUrl} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} /><button className="flip-back-btn" onClick={() => setFlipped(false)}>← Back to profile</button></section></div></article></section><div className="dashboard-footer"><p>A safer way home.</p>{cloudUser && <button className="signout-btn" onClick={signOut}>Sign out</button>}</div></main></Shell>
 }
 
 function AuthPage({ authenticate, busy, error }) {
@@ -258,8 +273,8 @@ function QRCard({ publicUrl }) { return <article className="qr-card"><QRCodePane
 
 function Step({ n, title, text }) { return <div className="step"><span>{n}</span><div><h4>{title}</h4><p>{text}</p></div></div> }
 
-function EditPage({ pet, pets, selectPet, createPet, update, saveProfile, saved, go, uploadPhoto, deletePet }) {
-  return <Shell go={go}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><div className="edit-pet-toolbar"><select value={pet._dbId || pet.id || ''} onChange={e => selectPet(pets.find(item => (item._dbId || item.id) === e.target.value) || pet)}>{pets.map(item => <option key={item._dbId || item.id} value={item._dbId || item.id}>{item.name}</option>)}</select><button className="outline-btn" type="button" onClick={createPet}>＋ Add pet</button></div><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="photo-upload"><div className="photo-preview">{typeof pet.photo === 'string' && pet.photo.startsWith('http') ? <img src={pet.photo} alt={`${pet.name} profile`} /> : pet.photo}</div><div><label>Pet photo<input type="file" accept="image/*" onChange={e => uploadPhoto(e.target.files?.[0])} /></label><small>JPG, PNG or WEBP · max 5 MB</small></div></div><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form><div className="data-controls"><div><strong>Remove this profile</strong><p>This removes {pet.name}, their conversations, and uploaded photo from your Leo Reunite account.</p></div><button type="button" className="danger-btn" onClick={() => window.confirm(`Delete ${pet.name}'s profile and conversations? This cannot be undone.`) && deletePet()}>Delete profile</button></div></main></Shell>
+function EditPage({ pet, pets, selectPet, createPet, update, saveProfile, saved, go, uploadPhoto, deletePet, feedback, dismissFeedback }) {
+  return <Shell go={go} feedback={feedback} dismissFeedback={dismissFeedback}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><div className="edit-pet-toolbar"><select value={pet._dbId || pet.id || ''} onChange={e => selectPet(pets.find(item => (item._dbId || item.id) === e.target.value) || pet)}>{pets.map(item => <option key={item._dbId || item.id} value={item._dbId || item.id}>{item.name}</option>)}</select><button className="outline-btn" type="button" onClick={createPet}>＋ Add pet</button></div><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="photo-upload"><div className="photo-preview">{typeof pet.photo === 'string' && pet.photo.startsWith('http') ? <img src={pet.photo} alt={`${pet.name} profile`} /> : pet.photo}</div><div><label>Pet photo<input type="file" accept="image/*" onChange={e => uploadPhoto(e.target.files?.[0])} /></label><small>JPG, PNG or WEBP · max 5 MB</small></div></div><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form><div className="data-controls"><div><strong>Remove this profile</strong><p>This removes {pet.name}, their conversations, and uploaded photo from your Leo Reunite account.</p></div><button type="button" className="danger-btn" onClick={() => window.confirm(`Delete ${pet.name}'s profile and conversations? This cannot be undone.`) && deletePet()}>Delete profile</button></div></main></Shell>
 }
 
 function ScanPage({ pet, message, setMessage, sent, setSent }) {
