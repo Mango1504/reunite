@@ -34,6 +34,7 @@ update public.conversations set expires_at = created_at + interval '24 hours' wh
 alter table public.conversations alter column expires_at set not null;
 alter table public.conversations add column if not exists finder_device_id text;
 alter table public.conversations add column if not exists blocked_at timestamptz;
+alter table public.conversations add column if not exists request_status text not null default 'pending';
 
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
@@ -291,6 +292,7 @@ begin
   if v_pet.id is null then raise exception 'Pet profile not found'; end if;
   if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id where c.pet_id = v_pet.id and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 20 then raise exception 'This profile has reached its message limit for now. Please try again later.'; end if;
   if exists (select 1 from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and blocked_at is not null) then raise exception 'This finder has been blocked by the owner'; end if;
+  if exists (select 1 from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and request_status = 'ignored' and expires_at > now()) then raise exception 'This message request was ignored by the owner'; end if;
   select id into v_conversation from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and blocked_at is null and expires_at > now() order by created_at desc limit 1;
   if v_conversation is null then
     insert into public.conversations (pet_id, owner_id, finder_device_id) values (v_pet.id, v_pet.owner_id, v_device) returning id into v_conversation;
@@ -312,7 +314,7 @@ declare
   v_body text := btrim(coalesce(p_body, ''));
 begin
   if char_length(v_body) < 1 or char_length(v_body) > 2000 then raise exception 'Message must be between 1 and 2000 characters'; end if;
-  if not exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = p_conversation and p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.expires_at > now()) then raise exception 'Conversation not found, blocked, or expired'; end if;
+  if not exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = p_conversation and p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.request_status = 'accepted' and c.expires_at > now()) then raise exception 'Conversation is waiting for owner approval, blocked, or expired'; end if;
   insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy) values (p_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
 end;
 $$;
@@ -353,6 +355,27 @@ end;
 $$;
 revoke all on function public.get_public_messages_v4(text, text, text) from public;
 grant execute on function public.get_public_messages_v4(text, text, text) to anon, authenticated;
+
+create or replace function public.get_public_messages_v5(p_token text, p_device_id text, p_session_id text default null)
+returns table(id uuid, conversation_id uuid, request_status text, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_session_id is not null and p_session_id <> p_device_id then
+    update public.conversations set expires_at = now() where finder_device_id = p_session_id and exists (select 1 from public.pets p where p.id = pet_id and p.public_token = p_token) and expires_at > now();
+    return;
+  end if;
+  return query
+    select m.id, m.conversation_id, c.request_status, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
+    from public.messages m join public.conversations c on c.id = m.conversation_id join public.pets p on p.id = c.pet_id
+    where p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.expires_at > now()
+    order by m.created_at asc;
+end;
+$$;
+revoke all on function public.get_public_messages_v5(text, text, text) from public;
+grant execute on function public.get_public_messages_v5(text, text, text) to anon, authenticated;
 
 create or replace function public.report_public_pet(p_token text, p_reason text)
 returns void
