@@ -209,13 +209,13 @@ $$;
 revoke all on function public.mark_public_messages_seen(text) from public;
 grant execute on function public.mark_public_messages_seen(text) to anon, authenticated;
 
-create or replace function public.get_public_messages(p_token text)
-returns table(id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
+create or replace function public.get_public_messages_v2(p_token text)
+returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
 language sql
 security definer
 set search_path = public
 as $$
-  select m.id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
+  select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
   from public.messages m
   join public.conversations c on c.id = m.conversation_id
   join public.pets p on p.id = c.pet_id
@@ -223,8 +223,35 @@ as $$
     and c.expires_at > now()
   order by m.created_at asc;
 $$;
-revoke all on function public.get_public_messages(text) from public;
-grant execute on function public.get_public_messages(text) to anon, authenticated;
+revoke all on function public.get_public_messages_v2(text) from public;
+grant execute on function public.get_public_messages_v2(text) to anon, authenticated;
+
+create or replace function public.send_public_reply(p_token text, p_conversation uuid, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_pet_id uuid;
+begin
+  if char_length(btrim(coalesce(p_body, ''))) < 1 or char_length(btrim(coalesce(p_body, ''))) > 2000 then
+    raise exception 'Message must be between 1 and 2000 characters';
+  end if;
+  select p.id into v_pet_id
+  from public.pets p
+  join public.conversations c on c.pet_id = p.id
+  where p.public_token = p_token and c.id = p_conversation and c.expires_at > now();
+  if v_pet_id is null then raise exception 'Conversation not found or expired'; end if;
+  if (select count(*) from public.messages m where m.conversation_id = p_conversation and m.created_at > now() - interval '1 hour') >= 20 then
+    raise exception 'Message limit reached for this conversation';
+  end if;
+  insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy)
+    values (p_conversation, 'finder', btrim(p_body), p_lat, p_lng, p_accuracy);
+end;
+$$;
+revoke all on function public.send_public_reply(text, uuid, text, double precision, double precision, double precision) from public;
+grant execute on function public.send_public_reply(text, uuid, text, double precision, double precision, double precision) to anon, authenticated;
 
 create or replace function public.report_public_pet(p_token text, p_reason text)
 returns void
