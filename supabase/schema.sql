@@ -41,6 +41,8 @@ create table if not exists public.messages (
   location_lat double precision,
   location_lng double precision,
   location_accuracy double precision,
+  delivered_at timestamptz not null default now(),
+  seen_at timestamptz,
   created_at timestamptz not null default now(),
   constraint messages_location_lat_valid check (location_lat is null or location_lat between -90 and 90),
   constraint messages_location_lng_valid check (location_lng is null or location_lng between -180 and 180),
@@ -49,6 +51,8 @@ create table if not exists public.messages (
 alter table public.messages add column if not exists location_lat double precision;
 alter table public.messages add column if not exists location_lng double precision;
 alter table public.messages add column if not exists location_accuracy double precision;
+alter table public.messages add column if not exists delivered_at timestamptz not null default now();
+alter table public.messages add column if not exists seen_at timestamptz;
 do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'messages_location_lat_valid') then
@@ -136,6 +140,24 @@ end;
 $$;
 revoke all on function public.send_public_message(text, text, double precision, double precision, double precision) from public;
 grant execute on function public.send_public_message(text, text, double precision, double precision, double precision) to anon, authenticated;
+
+create or replace function public.mark_public_messages_seen(p_token text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.messages m
+    set seen_at = coalesce(m.seen_at, now())
+    where m.sender_role = 'owner'
+      and exists (
+        select 1 from public.conversations c
+        join public.pets p on p.id = c.pet_id
+        where c.id = m.conversation_id and p.public_token = p_token
+      );
+$$;
+revoke all on function public.mark_public_messages_seen(text) from public;
+grant execute on function public.mark_public_messages_seen(text) to anon, authenticated;
 
 create policy "owners can manage conversations" on public.conversations for all
   using (auth.uid() = owner_id) with check (auth.uid() = owner_id);

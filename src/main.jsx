@@ -67,6 +67,7 @@ function App() {
       supabase.rpc('get_public_pet_v2', { p_token: token }).then(({ data }) => {
         if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, publicPhoto: data[0].public_photo, publicNote: data[0].public_note, photo: data[0].photo_url || '🐕' }))
       })
+      supabase.rpc('mark_public_messages_seen', { p_token: token })
     }
   }, [screen])
   useEffect(() => {
@@ -92,7 +93,7 @@ function App() {
   }
   async function loadInbox(ownerId = cloudUser?.id) {
     if (!supabase || !ownerId) return
-    const { data, error } = await supabase.from('conversations').select('id, pet_id, created_at, expires_at, pets(name), messages(id, sender_role, body, created_at, location_lat, location_lng, location_accuracy)').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false })
+    const { data, error } = await supabase.from('conversations').select('id, pet_id, created_at, expires_at, pets(name), messages(id, sender_role, body, created_at, delivered_at, seen_at, location_lat, location_lng, location_accuracy)').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false })
     if (error) setInboxError(error.message); else setInbox(data || [])
   }
   useEffect(() => {
@@ -214,7 +215,7 @@ function App() {
   if (isCloudMode && cloudUser && needsPassword) return <SetPasswordPage submit={setInvitePassword} busy={authBusy} error={authError} />
   if (isCloudMode && !cloudUser && screen !== 'auth') return <LandingPage go={go} />
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} busy={authBusy} error={authError} />
-  if (screen === 'inbox') return <InboxPage inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
+  if (screen === 'inbox') return <InboxPageWithTicks inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
   if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
   return <Dashboard pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} toggleMissing={toggleMissing} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
 }
@@ -239,7 +240,7 @@ function FeedbackToast({ feedback, onDismiss }) {
     return () => clearTimeout(timer)
   }, [feedback, onDismiss])
   if (!feedback) return null
-  return <div className={`feedback-toast ${feedback.type}`} role="status" aria-live="polite"><span className="feedback-icon">{feedback.type === 'success' ? '✓' : '!'}</span><span>{feedback.text}</span><button type="button" onClick={onDismiss} aria-label="Dismiss notification">×</button></div>
+  return <div className={`feedback-toast ${feedback.type}`} role="status" aria-live="polite"><span className="feedback-icon">{feedback.type === 'success' ? '✓' : '×'}</span><span>{feedback.text}</span><button type="button" onClick={onDismiss} aria-label="Dismiss notification">×</button></div>
 }
 
 function PetVisual({ photo, name, className }) {
@@ -265,8 +266,10 @@ function SetPasswordPage({ submit, busy, error }) {
 
 function QRCodePanel({ publicUrl, regenerateQr, qrBusy, qrError }) {
   const [data, setData] = useState('')
+  const [copied, setCopied] = useState(false)
   useEffect(() => { QRCode.toDataURL(publicUrl, { width: 220, margin: 1, color: { dark: '#20211f', light: '#ffffff' } }).then(setData) }, [publicUrl])
-  return <div className="qr-face-content"><div className="card-label">YOUR LEO REUNITE QR</div>{data ? <img className="qr" src={data} alt="QR code for the pet profile" /> : <div className="qr-placeholder">Generating…</div>}<p>Scan to view {publicUrl.includes('pet_') ? 'a safe contact page' : 'profile'}</p><div className="qr-actions"><a className="outline-btn" href={data} download="leo-reunite-pet-qr.png">Download QR</a><button className="outline-btn" onClick={() => navigator.clipboard?.writeText(publicUrl)}>Copy link</button></div><button className="replace-qr-btn" type="button" onClick={regenerateQr} disabled={qrBusy}>{qrBusy ? 'Replacing QR…' : 'Replace QR'}</button>{qrError && <div className="qr-error">{qrError}</div>}</div>
+  const copyLink = async () => { await navigator.clipboard?.writeText(publicUrl); setCopied(true); setTimeout(() => setCopied(false), 2200) }
+  return <div className="qr-face-content"><div className="card-label">YOUR LEO REUNITE QR</div>{data ? <img className="qr" src={data} alt="QR code for the pet profile" /> : <div className="qr-placeholder">Generating…</div>}<p>Scan to view {publicUrl.includes('pet_') ? 'a safe contact page' : 'profile'}</p><div className="qr-actions"><a className="outline-btn" href={data} download="leo-reunite-pet-qr.png">Download QR</a><button className="outline-btn" onClick={copyLink}>{copied ? 'Copied ✓' : 'Copy link'}</button></div><button className="replace-qr-btn" type="button" onClick={regenerateQr} disabled={qrBusy}>{qrBusy ? 'Replacing QR…' : 'Replace QR'}</button>{qrError && <div className="qr-error">{qrError}</div>}</div>
 }
 
 function QRCard({ publicUrl }) { return <article className="qr-card"><QRCodePanel publicUrl={publicUrl} /></article> }
@@ -282,6 +285,22 @@ function ScanPage({ pet, message, setMessage, sent, setSent }) {
   const shareLocation = () => { setLocBusy(true); setLocError(''); if (!navigator.geolocation) { setLocError('Location is not supported by this browser.'); setLocBusy(false); return } navigator.geolocation.getCurrentPosition(pos => { setCoords({ lat: Number(pos.coords.latitude.toFixed(3)), lng: Number(pos.coords.longitude.toFixed(3)), accuracy: pos.coords.accuracy }); setLocBusy(false) }, () => { setLocError('Location permission was denied. You can still send the message without it.'); setLocBusy(false) }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }) }
   const send = async () => { setBusy(true); setError(''); const token = location.hash.replace(/^#\/pet\//, ''); const result = supabase ? await supabase.rpc('send_public_message', { p_token: token, p_body: message.trim(), p_lat: coords?.lat ?? null, p_lng: coords?.lng ?? null, p_accuracy: coords?.accuracy ?? null }) : { error: null }; if (result.error) setError(result.error.message); else setSent(true); setBusy(false) }
   return <div className="scan-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="scan-main"><div className="scan-eyebrow"><span className="scan-dot" /> You found a pet profile</div><PetVisual photo={pet.publicPhoto ? pet.photo : '🐾'} name={pet.name} className="scan-pet-avatar" /><h1>Meet {pet.name}.</h1><p className="scan-sub">{pet.publicPhoto ? `${pet.breed} · ${pet.age}` : 'A pet who may need a little help getting home.'}</p>{pet.missing && <div className="missing-banner">This pet has been marked missing. Please contact their person.</div>}{pet.publicNote && <div className="safety-note"><span>✦</span><div><strong>A note from their family</strong><p>{pet.note}</p></div></div>}<div className="owner-card"><div className="owner-initial">L</div><div><div className="card-label">THEIR PERSON</div><strong>Leo Reunite member</strong><p>Contact is private and secure</p></div></div>{sent ? <div className="sent-state"><span>✓</span><div><strong>Message sent safely</strong><p>Their person will receive your message{coords ? ' and approximate location' : ''} in their Leo Reunite inbox.</p></div></div> : <div className="message-box"><label htmlFor="message">Send a private message</label><textarea id="message" value={message} onChange={e => setMessage(e.target.value)} placeholder="Where did you find them?" maxLength="2000" /><button type="button" className={`location-btn ${coords ? 'shared' : ''}`} onClick={shareLocation} disabled={locBusy}>{coords ? '✓ Approximate location attached' : locBusy ? 'Finding your location…' : '＋ Share approximate location'}</button>{locError && <div className="location-error">{locError}</div>}{error && <div className="auth-error">{error}</div>}<button className="primary-btn wide" disabled={!message.trim() || busy} onClick={send}>{busy ? 'Sending…' : 'Contact owner privately'} <span>→</span></button><small>Your contact details stay hidden. Location is shared only if you choose it.</small></div>}<p className="scan-foot">Leo Reunite · <strong>A safer way home</strong></p></main></div>
+}
+
+function InboxPageWithTicks({ inbox, error, reload, go, supabase, feedback, dismissFeedback }) {
+  const [selected, setSelected] = useState(inbox[0] || null)
+  const [reply, setReply] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sendError, setSendError] = useState('')
+  useEffect(() => { if (!selected && inbox[0]) setSelected(inbox[0]) }, [inbox, selected])
+  const send = async () => {
+    if (!reply.trim() || !selected) return
+    setBusy(true); setSendError('')
+    const { error: insertError } = await supabase.from('messages').insert({ conversation_id: selected.id, sender_role: 'owner', body: reply.trim() })
+    if (insertError) { setSendError(insertError.message); setBusy(false); return }
+    setReply(''); await reload(); setBusy(false)
+  }
+  return <Shell go={go} feedback={feedback} dismissFeedback={dismissFeedback}><main className="page inbox-page"><div className="eyebrow">PRIVATE INBOX</div><div className="section-heading"><div><h3>Finder messages</h3><p className="lead">Reply without revealing your personal contact details.</p></div><button className="outline-btn" onClick={reload}>Refresh</button></div>{(error || sendError) && <div className="auth-error">{error || sendError}</div>}<div className="inbox-layout"><aside className="conversation-list">{inbox.length ? inbox.map(c => <button className={`conversation ${selected?.id === c.id ? 'active' : ''}`} onClick={() => setSelected(c)} key={c.id}><strong>{c.pets?.name || 'Your pet'}</strong><span>{new Date(c.created_at).toLocaleString()}</span><p>{c.messages?.[c.messages.length - 1]?.body || 'New message'}</p></button>) : <div className="empty-state">No finder messages yet.<br /><small>Messages sent from your pet’s QR page will appear here.</small></div>}</aside><section className="conversation-view">{selected ? <><div className="conversation-head"><div className="eyebrow">CONVERSATION</div><h3>{selected.pets?.name || 'Your pet'}</h3></div><div className="message-thread">{(selected.messages || []).sort((a,b) => new Date(a.created_at)-new Date(b.created_at)).map(m => <div className={`thread-message ${m.sender_role}`} key={m.id}><div className="message-meta"><span>{m.sender_role === 'finder' ? 'Finder' : 'You'}</span>{m.sender_role === 'owner' && <span className={`message-status ${m.seen_at ? 'seen' : ''}`} aria-label={m.seen_at ? 'Seen' : m.delivered_at ? 'Delivered' : 'Sent'}>{m.seen_at || m.delivered_at ? '✓✓' : '✓'}</span>}</div><p>{m.body}</p>{m.location_lat && m.location_lng && <a className="location-link" href={`https://www.google.com/maps?q=${m.location_lat},${m.location_lng}`} target="_blank" rel="noreferrer">View approximate finder location →</a>}<small>{new Date(m.created_at).toLocaleString()}</small></div>)}</div><div className="reply-box"><textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Write a reply…" maxLength={2000} /><button className="primary-btn" onClick={send} disabled={!reply.trim() || busy}>{busy ? 'Sending…' : 'Reply'}</button></div></> : <div className="empty-state">Select a conversation to read and reply.</div>}</section></div></main></Shell>
 }
 
 function InboxPage({ inbox, error, reload, go, supabase }) {
