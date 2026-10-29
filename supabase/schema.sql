@@ -214,6 +214,20 @@ $$;
 revoke all on function public.mark_public_messages_seen(text) from public;
 grant execute on function public.mark_public_messages_seen(text) to anon, authenticated;
 
+create or replace function public.mark_public_messages_seen_v2(p_token text, p_device_id text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.messages m
+    set delivered_at = coalesce(m.delivered_at, now()), seen_at = coalesce(m.seen_at, now())
+    where m.sender_role = 'owner'
+      and exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = m.conversation_id and p.public_token = p_token and c.finder_device_id = p_device_id);
+$$;
+revoke all on function public.mark_public_messages_seen_v2(text, text) from public;
+grant execute on function public.mark_public_messages_seen_v2(text, text) to anon, authenticated;
+
 create or replace function public.get_public_messages_v2(p_token text)
 returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
 language sql

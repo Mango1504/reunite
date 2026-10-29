@@ -79,7 +79,7 @@ function App() {
       supabase.rpc('get_public_pet_v2', { p_token: token }).then(({ data }) => {
         if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, publicPhoto: data[0].public_photo, publicNote: data[0].public_note, photo: data[0].photo_url || '🐕' }))
       })
-      supabase.rpc('mark_public_messages_seen', { p_token: token })
+      supabase.rpc('mark_public_messages_seen_v2', { p_token: token, p_device_id: getFinderDeviceId(token) })
     }
   }, [screen])
   useEffect(() => {
