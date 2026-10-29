@@ -226,7 +226,9 @@ function App() {
     const args = conversationId
       ? { p_token: token, p_conversation: conversationId, p_body: body, p_lat: coords?.lat ?? null, p_lng: coords?.lng ?? null, p_accuracy: coords?.accuracy ?? null }
       : { p_token: token, p_body: body, p_lat: coords?.lat ?? null, p_lng: coords?.lng ?? null, p_accuracy: coords?.accuracy ?? null }
-    return await supabase.rpc(fn, args)
+    const result = await supabase.rpc(fn, args)
+    if (!conversationId && !result.error && Array.isArray(result.data)) return { ...result, data: result.data[0]?.send_public_message || result.data[0] || null }
+    return result
   }
   const reportPet = async reason => {
     if (!supabase) return new Error('Reporting is unavailable in demo mode.')
