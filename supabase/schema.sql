@@ -32,6 +32,7 @@ alter table public.conversations add column if not exists expires_at timestamptz
 alter table public.conversations alter column expires_at set default (now() + interval '30 days');
 update public.conversations set expires_at = created_at + interval '30 days' where expires_at is null;
 alter table public.conversations alter column expires_at set not null;
+alter table public.conversations add column if not exists finder_device_id text;
 
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
@@ -83,13 +84,17 @@ set search_path = public, realtime
 as $$
 declare
   v_token text;
+  v_device_id text;
 begin
   select p.public_token into v_token
   from public.conversations c
   join public.pets p on p.id = c.pet_id
   where c.id = new.conversation_id;
   if v_token is not null then
-    perform realtime.broadcast_changes('pet:' || v_token, 'message', 'INSERT', 'messages', 'public', new, null);
+    select c.finder_device_id into v_device_id from public.conversations c where c.id = new.conversation_id;
+    if v_device_id is not null then
+      perform realtime.broadcast_changes('pet:' || v_token || ':' || v_device_id, 'message', 'INSERT', 'messages', 'public', new, null);
+    end if;
   end if;
   return new;
 end;
@@ -253,6 +258,65 @@ $$;
 revoke all on function public.send_public_reply(text, uuid, text, double precision, double precision, double precision) from public;
 grant execute on function public.send_public_reply(text, uuid, text, double precision, double precision, double precision) to anon, authenticated;
 
+create or replace function public.send_public_message_v2(p_token text, p_device_id text, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_pet public.pets;
+  v_conversation uuid;
+  v_body text := btrim(coalesce(p_body, ''));
+  v_device text := btrim(coalesce(p_device_id, ''));
+begin
+  if char_length(v_body) < 1 or char_length(v_body) > 2000 then raise exception 'Message must be between 1 and 2000 characters'; end if;
+  if char_length(v_device) < 16 or char_length(v_device) > 100 then raise exception 'Finder device identity is invalid'; end if;
+  select * into v_pet from public.pets where public_token = p_token limit 1;
+  if v_pet.id is null then raise exception 'Pet profile not found'; end if;
+  if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id where c.pet_id = v_pet.id and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 20 then raise exception 'This profile has reached its message limit for now. Please try again later.'; end if;
+  select id into v_conversation from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and expires_at > now() order by created_at desc limit 1;
+  if v_conversation is null then
+    insert into public.conversations (pet_id, owner_id, finder_device_id) values (v_pet.id, v_pet.owner_id, v_device) returning id into v_conversation;
+  end if;
+  insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy) values (v_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
+  return v_conversation;
+end;
+$$;
+revoke all on function public.send_public_message_v2(text, text, text, double precision, double precision, double precision) from public;
+grant execute on function public.send_public_message_v2(text, text, text, double precision, double precision, double precision) to anon, authenticated;
+
+create or replace function public.send_public_reply_v2(p_token text, p_device_id text, p_conversation uuid, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_body text := btrim(coalesce(p_body, ''));
+begin
+  if char_length(v_body) < 1 or char_length(v_body) > 2000 then raise exception 'Message must be between 1 and 2000 characters'; end if;
+  if not exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = p_conversation and p.public_token = p_token and c.finder_device_id = p_device_id and c.expires_at > now()) then raise exception 'Conversation not found or expired'; end if;
+  insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy) values (p_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
+end;
+$$;
+revoke all on function public.send_public_reply_v2(text, text, uuid, text, double precision, double precision, double precision) from public;
+grant execute on function public.send_public_reply_v2(text, text, uuid, text, double precision, double precision, double precision) to anon, authenticated;
+
+create or replace function public.get_public_messages_v3(p_token text, p_device_id text)
+returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
+language sql
+security definer
+set search_path = public
+as $$
+  select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
+  from public.messages m join public.conversations c on c.id = m.conversation_id join public.pets p on p.id = c.pet_id
+  where p.public_token = p_token and c.finder_device_id = p_device_id and c.expires_at > now()
+  order by m.created_at asc;
+$$;
+revoke all on function public.get_public_messages_v3(text, text) from public;
+grant execute on function public.get_public_messages_v3(text, text) to anon, authenticated;
+
 create or replace function public.report_public_pet(p_token text, p_reason text)
 returns void
 language plpgsql
@@ -292,6 +356,8 @@ create policy "owners can send replies" on public.messages for insert
 
 create index if not exists conversations_owner_created_idx
   on public.conversations (owner_id, created_at desc);
+create index if not exists conversations_pet_device_idx
+  on public.conversations (pet_id, finder_device_id, created_at desc);
 create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);
 
