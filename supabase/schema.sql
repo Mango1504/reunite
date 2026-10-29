@@ -33,6 +33,7 @@ alter table public.conversations alter column expires_at set default (now() + in
 update public.conversations set expires_at = created_at + interval '24 hours' where expires_at is null or expires_at > created_at + interval '24 hours';
 alter table public.conversations alter column expires_at set not null;
 alter table public.conversations add column if not exists finder_device_id text;
+alter table public.conversations add column if not exists blocked_at timestamptz;
 
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
@@ -289,7 +290,8 @@ begin
   select * into v_pet from public.pets where public_token = p_token limit 1;
   if v_pet.id is null then raise exception 'Pet profile not found'; end if;
   if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id where c.pet_id = v_pet.id and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 20 then raise exception 'This profile has reached its message limit for now. Please try again later.'; end if;
-  select id into v_conversation from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and expires_at > now() order by created_at desc limit 1;
+  if exists (select 1 from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and blocked_at is not null) then raise exception 'This finder has been blocked by the owner'; end if;
+  select id into v_conversation from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and blocked_at is null and expires_at > now() order by created_at desc limit 1;
   if v_conversation is null then
     insert into public.conversations (pet_id, owner_id, finder_device_id) values (v_pet.id, v_pet.owner_id, v_device) returning id into v_conversation;
   end if;
@@ -310,7 +312,7 @@ declare
   v_body text := btrim(coalesce(p_body, ''));
 begin
   if char_length(v_body) < 1 or char_length(v_body) > 2000 then raise exception 'Message must be between 1 and 2000 characters'; end if;
-  if not exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = p_conversation and p.public_token = p_token and c.finder_device_id = p_device_id and c.expires_at > now()) then raise exception 'Conversation not found or expired'; end if;
+  if not exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = p_conversation and p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.expires_at > now()) then raise exception 'Conversation not found, blocked, or expired'; end if;
   insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy) values (p_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
 end;
 $$;
@@ -345,7 +347,7 @@ begin
   return query
     select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
     from public.messages m join public.conversations c on c.id = m.conversation_id join public.pets p on p.id = c.pet_id
-    where p.public_token = p_token and c.finder_device_id = p_device_id and c.expires_at > now()
+    where p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.expires_at > now()
     order by m.created_at asc;
 end;
 $$;
