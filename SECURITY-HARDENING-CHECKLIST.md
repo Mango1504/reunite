@@ -13,7 +13,7 @@ This checklist tracks fixes that have been implemented, deployed, and verified. 
 
 ## P1 — launch quality
 
-- [ ] Strengthen password policy and improve confirmation/reset states. Frontend minimum is now 8 characters and is live in `9f67d4d`; Supabase Auth minimum and leaked-password protection still need to be set in the dashboard.
+- [x] Strengthen password policy and improve confirmation/reset states. Frontend minimum is live in `9f67d4d`; user confirmed Supabase Auth minimum is 8 characters and leaked-password protection is enabled.
 - [ ] Add complete account deletion and reconcile retention wording with database behavior.
 - [ ] Add security headers and connect the stable production domain.
 - [ ] Remove obsolete UI/API code paths and add automated auth/messaging tests.
