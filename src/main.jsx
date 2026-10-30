@@ -98,6 +98,7 @@ function App() {
   const [ownerProfile, setOwnerProfile] = useState(() => isCloudMode ? emptyOwnerProfile : loadOwnerProfileLocal())
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [authMessage, setAuthMessage] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
   const [inbox, setInbox] = useState([])
   const [inboxError, setInboxError] = useState('')
@@ -243,21 +244,27 @@ function App() {
     }
   }
   const authenticate = async (mode, email, password) => {
-    setAuthBusy(true); setAuthError('')
-    const authRedirect = `${location.origin}${location.pathname}`
-    const result = mode === 'signup'
-      ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: authRedirect } })
-      : await supabase.auth.signInWithPassword({ email, password })
-    if (result.error) setAuthError(result.error.message)
-    else if (mode === 'signup' && !result.data.session) setAuthError('Leo Reunite sent an authentication request to your email. Open the confirmation link, then return here to sign in.')
-    setAuthBusy(false)
+    if (password.length < 12) { setAuthError('Use at least 12 characters for your password.'); return }
+    setAuthBusy(true); setAuthError(''); setAuthMessage('')
+    try {
+      const authRedirect = `${location.origin}${location.pathname}`
+      const result = mode === 'signup'
+        ? await supabase.auth.signUp({ email: email.trim(), password, options: { emailRedirectTo: authRedirect } })
+        : await supabase.auth.signInWithPassword({ email: email.trim(), password })
+      if (result.error) setAuthError(result.error.message)
+      else if (mode === 'signup' && !result.data.session) setAuthMessage('Leo Reunite sent an authentication request to your email. Open the confirmation link, then return here to sign in.')
+    } catch { setAuthError('We could not reach Leo Reunite. Check your connection and try again.') }
+    finally { setAuthBusy(false) }
   }
   const sendPasswordReset = async email => {
-    setAuthBusy(true); setAuthError('')
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}${location.pathname}#auth` })
-    if (error) setAuthError(error.message)
-    else setAuthError('Password reset instructions sent. Check your email.')
-    setAuthBusy(false)
+    if (!email.trim()) { setAuthError('Enter your email first, then choose Forgot password.'); return }
+    setAuthBusy(true); setAuthError(''); setAuthMessage('')
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${location.origin}${location.pathname}#auth` })
+      if (error) setAuthError(error.message)
+      else setAuthMessage('Password reset instructions sent. Check your email.')
+    } catch { setAuthError('We could not reach Leo Reunite. Check your connection and try again.') }
+    finally { setAuthBusy(false) }
   }
   const setInvitePassword = async (password) => {
     setAuthBusy(true); setAuthError('')
@@ -348,7 +355,7 @@ function App() {
   if (isProductionMisconfigured) return <ConfigurationErrorPage />
   if (isCloudMode && cloudUser && needsPassword) return <SetPasswordPage submit={setInvitePassword} busy={authBusy} error={authError} />
   if (isCloudMode && !cloudUser && screen !== 'auth') return <LandingPage go={go} />
-  if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} sendPasswordReset={sendPasswordReset} busy={authBusy} error={authError} />
+  if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} sendPasswordReset={sendPasswordReset} busy={authBusy} error={authError} message={authMessage} />
   if (screen === 'inbox') return <InboxPageWithRequests inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
   if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} ownerProfile={ownerProfile} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
   const firstTimeOwner = Boolean(cloudUser && pets.length === 1 && pets[0].name === 'Your pet' && !pets[0].breed)
@@ -527,17 +534,18 @@ function Dashboard({ pet, pets, selectPet, createPet, toggleMissing, publicUrl, 
   return <Shell go={go} inboxCount={inboxCount} feedback={feedback} dismissFeedback={dismissFeedback}><main className="dashboard page"><section className="pet-switcher"><div className="pet-avatar-list">{pets.map(item => <button key={item._dbId || item.id} className={`pet-avatar-choice ${(item._dbId || item.id) === (pet._dbId || pet.id) ? 'selected' : ''}`} onClick={() => selectPet(item)}><PetVisual photo={item.photo} name={item.name} className="pet-picker-avatar" /><span>{item.name}</span></button>)}<button className="pet-avatar-choice add-avatar" onClick={createPet}><span className="pet-picker-avatar">＋</span><span>Create</span></button></div></section>{firstTimeOwner && <section className="welcome-card"><div><div className="eyebrow">WELCOME TO LEO REUNITE</div><h2>Let’s make their way home.</h2><p>Your account is ready. Add your pet’s name and one helpful detail, then save to create their private QR identity.</p></div><button className="primary-btn" onClick={() => go('edit')}>Set up your pet <span>→</span></button></section>}<section className="dashboard-grid"><article ref={cardRef} className={`pet-card flip-card ${flipped ? 'is-flipped' : ''}`}><div className="flip-card-inner"><section className="flip-face flip-front"><div className="pet-card-top"><PetVisual photo={pet.photo} name={pet.name} className="pet-avatar" /><div><div className="card-label">YOUR PET</div><h2>{pet.name}</h2><p>{pet.breed || 'Add their details'}{pet.age ? ` · ${pet.age}` : ''}</p></div><button className="icon-btn" onClick={() => go('edit')} aria-label="Edit profile">↗</button></div>{pet.missing && <div className="missing-status">● Marked missing · finder contact is on</div>}<div className="finder-preview"><div className="card-label">FINDER SEES</div><p>{pet.publicPhoto ? 'Photo' : 'No photo'} · {pet.breed || 'Pet details'} · {pet.age || 'Age hidden'}{pet.publicNote && pet.note ? ` · ${pet.note}` : ''}</p></div><div className="privacy-row"><button className={`missing-toggle ${pet.missing ? 'active' : ''}`} onClick={toggleMissing}>{pet.missing ? '✓ Marked missing' : 'Mark as missing'}</button><button className="flip-hint" onClick={() => setFlipped(true)}>Show QR <span>↻</span></button></div></section><section className="flip-face flip-back"><QRCodePanel publicUrl={publicUrl} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} /><button className="flip-back-btn" onClick={() => setFlipped(false)}>← Back to profile</button></section></div></article></section><div className="dashboard-footer"><p>A safer way home.</p>{cloudUser && <button className="signout-btn" onClick={signOut}>Sign out</button>}</div></main></Shell>
 }
 
-function AuthPage({ authenticate, sendPasswordReset, busy, error }) {
-  const [mode, setMode] = useState('signin'); const [email, setEmail] = useState(''); const [password, setPassword] = useState('')
+function AuthPage({ authenticate, sendPasswordReset, busy, error, message }) {
+  const [mode, setMode] = useState('signin'); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [confirm, setConfirm] = useState(''); const [showPassword, setShowPassword] = useState(false)
   const switchMode = () => setMode(current => current === 'signin' ? 'signup' : 'signin')
-  return <div className="auth-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="auth-card"><div className="eyebrow">PRIVATE PET IDENTITY</div><h1>{mode === 'signin' ? 'Welcome back.' : 'Make a safe home.'}</h1><p>{mode === 'signin' ? 'Sign in with your Leo Reunite account.' : 'Create your private pet identity in a few seconds.'}</p><form onSubmit={e => { e.preventDefault(); authenticate(mode, email, password) }}><label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label><label>Password<input type="password" minLength="6" value={password} onChange={e => setPassword(e.target.value)} required /></label>{error && <div className="auth-error">{error}</div>}<button className="primary-btn wide" disabled={busy}>{busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'} <span>→</span></button></form><div className="auth-links">{mode === 'signin' && <button className="auth-toggle" disabled={busy} onClick={() => sendPasswordReset(email)}>Forgot password?</button>}<button className="auth-toggle" disabled={busy} onClick={switchMode}>{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></div></main></div>
+  const mismatch = mode === 'signup' && confirm.length > 0 && password !== confirm
+  return <div className="auth-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="auth-card"><div className="eyebrow">PRIVATE PET IDENTITY</div><h1>{mode === 'signin' ? 'Welcome back.' : 'Make a safe home.'}</h1><p>{mode === 'signin' ? 'Sign in with your Leo Reunite account.' : 'Create your private pet identity in a few seconds.'}</p><form onSubmit={e => { e.preventDefault(); if (!mismatch) authenticate(mode, email, password) }}><label>Email<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required /></label><label>Password<div className="password-field"><input type={showPassword ? 'text' : 'password'} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} minLength="12" value={password} onChange={e => setPassword(e.target.value)} required /><button type="button" className="password-toggle" onClick={() => setShowPassword(current => !current)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? 'Hide' : 'Show'}</button></div></label>{mode === 'signup' && <label>Confirm password<div className="password-field"><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" minLength="12" value={confirm} onChange={e => setConfirm(e.target.value)} required /><span className="password-spacer" /></div></label>}{mismatch && <div className="auth-error">The passwords do not match.</div>}{error && <div className="auth-error" role="alert">{error}</div>}{message && <div className="auth-success" role="status">{message}</div>}<small className="password-hint">Use at least 12 characters. A passphrase is a good choice.</small><button className="primary-btn wide" disabled={busy || mismatch}>{busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'} <span>→</span></button></form><div className="auth-links">{mode === 'signin' && <button className="auth-toggle" disabled={busy} onClick={() => sendPasswordReset(email)}>Forgot password?</button>}<button className="auth-toggle" disabled={busy} onClick={switchMode}>{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></div></main></div>
 }
 
 function SetPasswordPage({ submit, busy, error }) {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const mismatch = confirm.length > 0 && password !== confirm
-  return <div className="auth-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="auth-card"><div className="eyebrow">ACCOUNT ACTIVATION</div><h1>Set your password.</h1><p>Your invitation worked. Choose a password to finish setting up your Leo Reunite account.</p><form onSubmit={e => { e.preventDefault(); if (!mismatch) submit(password) }}><label>Password<input type="password" minLength="6" value={password} onChange={e => setPassword(e.target.value)} required /></label><label>Confirm password<input type="password" minLength="6" value={confirm} onChange={e => setConfirm(e.target.value)} required /></label>{mismatch && <div className="auth-error">The passwords do not match.</div>}{error && <div className="auth-error">{error}</div>}<button className="primary-btn wide" disabled={busy || mismatch}>{busy ? 'Saving…' : 'Finish account setup'} <span>→</span></button></form><small>Use at least 6 characters. Never share your password.</small></main></div>
+  return <div className="auth-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="auth-card"><div className="eyebrow">ACCOUNT ACTIVATION</div><h1>Set your password.</h1><p>Your invitation worked. Choose a password to finish setting up your Leo Reunite account.</p><form onSubmit={e => { e.preventDefault(); if (!mismatch && password.length >= 12) submit(password) }}><label>Password<input type="password" autoComplete="new-password" minLength="12" value={password} onChange={e => setPassword(e.target.value)} required /></label><label>Confirm password<input type="password" autoComplete="new-password" minLength="12" value={confirm} onChange={e => setConfirm(e.target.value)} required /></label>{password.length > 0 && password.length < 12 && <div className="auth-error">Use at least 12 characters.</div>}{mismatch && <div className="auth-error">The passwords do not match.</div>}{error && <div className="auth-error">{error}</div>}<button className="primary-btn wide" disabled={busy || mismatch || password.length < 12}>{busy ? 'Saving…' : 'Finish account setup'} <span>→</span></button></form><small>Use at least 12 characters. Never share your password.</small></main></div>
 }
 
 function QRCodePanel({ publicUrl, regenerateQr, qrBusy, qrError }) {
