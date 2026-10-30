@@ -208,9 +208,12 @@ function App() {
   }
   const authenticate = async (mode, email, password) => {
     setAuthBusy(true); setAuthError('')
-    const result = mode === 'signup' ? await supabase.auth.signUp({ email, password }) : await supabase.auth.signInWithPassword({ email, password })
+    const authRedirect = `${location.origin}${location.pathname}`
+    const result = mode === 'signup'
+      ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: authRedirect } })
+      : await supabase.auth.signInWithPassword({ email, password })
     if (result.error) setAuthError(result.error.message)
-    else if (mode === 'signup' && !result.data.session) setAuthError('Check your email to confirm your account, then sign in.')
+    else if (mode === 'signup' && !result.data.session) setAuthError('Leo Reunite sent an authentication request to your email. Open the confirmation link, then return here to sign in.')
     setAuthBusy(false)
   }
   const sendPasswordReset = async email => {
