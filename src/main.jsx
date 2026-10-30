@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import QRCode from 'qrcode'
 import { isCloudMode, supabase } from './lib/supabase'
 import './styles.css'
 import './retention.css'
@@ -11,6 +10,12 @@ const seedPet = {
   id: 'pet_8f4a9c2e', name: 'Milo', breed: 'Golden Retriever', species: 'Dog',
   age: '3 years', photo: '🐕', note: 'Milo is friendly but may be nervous around traffic.',
   publicPhoto: true, publicNote: true, missing: false
+}
+
+let qrCodeModulePromise
+function loadQrCode() {
+  qrCodeModulePromise ||= import('qrcode')
+  return qrCodeModulePromise
 }
 
 function loadPet() {
@@ -507,7 +512,15 @@ function SetPasswordPage({ submit, busy, error }) {
 function QRCodePanel({ publicUrl, regenerateQr, qrBusy, qrError }) {
   const [data, setData] = useState('')
   const [copied, setCopied] = useState(false)
-  useEffect(() => { QRCode.toDataURL(publicUrl, { width: 220, margin: 1, color: { dark: '#20211f', light: '#ffffff' } }).then(setData) }, [publicUrl])
+  useEffect(() => {
+    let active = true
+    setData('')
+    loadQrCode().then(module => {
+      const QRCode = module.default || module
+      return QRCode.toDataURL(publicUrl, { width: 220, margin: 1, color: { dark: '#20211f', light: '#ffffff' } })
+    }).then(nextData => { if (active) setData(nextData) }).catch(() => { if (active) setData('') })
+    return () => { active = false }
+  }, [publicUrl])
   const copyLink = async () => { await navigator.clipboard?.writeText(publicUrl); setCopied(true); setTimeout(() => setCopied(false), 2200) }
   return <div className="qr-face-content"><div className="card-label">YOUR LEO REUNITE QR</div>{data ? <img className="qr" src={data} alt="QR code for the pet profile" /> : <div className="qr-placeholder">Generating…</div>}<p>Scan to view {publicUrl.includes('pet_') ? 'a safe contact page' : 'profile'}</p><div className="qr-actions"><a className="outline-btn" href={data} download="leo-reunite-pet-qr.png">Download QR</a><button className="outline-btn" onClick={copyLink}>{copied ? 'Copied ✓' : 'Copy link'}</button></div><button className="replace-qr-btn" type="button" onClick={regenerateQr} disabled={qrBusy}>{qrBusy ? 'Replacing QR…' : 'Replace QR'}</button>{qrError && <div className="qr-error">{qrError}</div>}</div>
 }
