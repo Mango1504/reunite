@@ -15,7 +15,7 @@ This checklist tracks fixes that have been implemented, deployed, and verified. 
 
 - [x] Strengthen password policy and improve confirmation/reset states. Frontend minimum is live in `9f67d4d`; user confirmed Supabase Auth minimum is 8 characters and leaked-password protection is enabled.
 - [x] Add complete account deletion and reconcile retention wording with database behavior. UI/privacy code is live in `234385b`; user confirmed `20261030_add_account_deletion.sql` ran in Supabase.
-- [ ] Add security headers and connect the stable production domain.
+- [ ] Add security headers and connect the stable production domain. Security headers are deployed in `fad1813`; a custom domain is still pending because no domain has been provided/configured.
 - [ ] Remove obsolete UI/API code paths and add automated auth/messaging tests.
 - [ ] Complete dependency vulnerability auditing in CI.
 
