@@ -60,6 +60,18 @@ function saveOwnerProfileLocal(profile) {
   try { localStorage.setItem('leo-owner-profile', JSON.stringify(profile)); window.dispatchEvent(new Event('leo-owner-profile')) } catch {}
 }
 
+function notifyOwnerProfileChanged() {
+  window.dispatchEvent(new Event('leo-owner-profile'))
+}
+
+function clearLocalOwnerCache() {
+  try {
+    localStorage.removeItem('reunite-pet')
+    localStorage.removeItem('reunite-pets')
+    localStorage.removeItem('leo-owner-profile')
+  } catch {}
+}
+
 function ownerInitials(profile) {
   const source = profile?.username || profile?.full_name || 'LR'
   return source.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'LR'
@@ -70,14 +82,14 @@ function publicOwnerName(profile) {
 }
 
 function App() {
-  const [pets, setPets] = useState(loadPets)
+  const [pets, setPets] = useState(() => isCloudMode ? [seedPet] : loadPets())
   const [pet, setPet] = useState(() => pets[0] || seedPet)
   const [screen, setScreen] = useState(location.hash.startsWith('#/pet/') ? 'scan' : 'home')
   const [message, setMessage] = useState('')
   const [sent, setSent] = useState(false)
   const [saved, setSaved] = useState(false)
   const [cloudUser, setCloudUser] = useState(null)
-  const [ownerProfile, setOwnerProfile] = useState(loadOwnerProfileLocal)
+  const [ownerProfile, setOwnerProfile] = useState(() => isCloudMode ? emptyOwnerProfile : loadOwnerProfileLocal())
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
@@ -90,8 +102,11 @@ function App() {
   const notify = (type, text) => setFeedback({ type, text, id: Date.now() })
 
   useEffect(() => {
-    localStorage.setItem('reunite-pet', JSON.stringify(pet))
-    if (!isCloudMode) localStorage.setItem('reunite-pets', JSON.stringify(pets))
+    if (isCloudMode) clearLocalOwnerCache()
+    else {
+      localStorage.setItem('reunite-pet', JSON.stringify(pet))
+      localStorage.setItem('reunite-pets', JSON.stringify(pets))
+    }
   }, [pet, pets])
   useEffect(() => {
     if (!supabase) return undefined
@@ -146,9 +161,9 @@ function App() {
     const profile = { ...emptyOwnerProfile, ...(data || { id: ownerId }) }
     if (!data) {
       const { data: created } = await supabase.from('owner_profiles').upsert({ id: ownerId }).select().single()
-      if (created) { setOwnerProfile({ ...emptyOwnerProfile, ...created }); saveOwnerProfileLocal({ ...emptyOwnerProfile, ...created }); return }
+      if (created) { setOwnerProfile({ ...emptyOwnerProfile, ...created }); if (!isCloudMode) saveOwnerProfileLocal({ ...emptyOwnerProfile, ...created }); else notifyOwnerProfileChanged(); return }
     }
-    setOwnerProfile(profile); saveOwnerProfileLocal(profile)
+    setOwnerProfile(profile); if (!isCloudMode) saveOwnerProfileLocal(profile); else notifyOwnerProfileChanged()
   }
   async function saveOwnerProfile(profile) {
     const next = { ...emptyOwnerProfile, ...profile }
@@ -156,7 +171,7 @@ function App() {
       const payload = { ...next, id: cloudUser.id, username: next.username.trim() || null }
       const { data, error } = await supabase.from('owner_profiles').upsert(payload).select().single()
       if (error) { notify('error', 'Your account profile could not be saved.'); return false }
-      setOwnerProfile({ ...emptyOwnerProfile, ...data }); saveOwnerProfileLocal({ ...emptyOwnerProfile, ...data })
+      setOwnerProfile({ ...emptyOwnerProfile, ...data }); notifyOwnerProfileChanged()
     } else {
       setOwnerProfile(next); saveOwnerProfileLocal(next)
     }
@@ -198,12 +213,12 @@ function App() {
     } else {
       setPets(current => current.map(item => item.id === pet.id ? pet : item))
     }
-    localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true); setProfileDirty(false); notify('success', 'Pet profile saved.')
+    if (!isCloudMode) localStorage.setItem('reunite-pet', JSON.stringify(pet)); setSaved(true); setProfileDirty(false); notify('success', 'Pet profile saved.')
   }
   const toggleMissing = async () => {
     const updated = { ...pet, missing: !pet.missing }
     setPet(updated); setPets(current => current.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))
-    localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item)))
+    if (!isCloudMode) { localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))) }
     if (supabase && cloudUser && pet._dbId) {
       const { error } = await supabase.from('pets').update({ missing: updated.missing }).eq('id', pet._dbId)
       if (error) { setAuthError(error.message); notify('error', 'Missing status could not be updated.') }
@@ -239,7 +254,7 @@ function App() {
     }
     setAuthBusy(false)
   }
-  const signOut = async () => { await supabase?.auth.signOut(); setCloudUser(null) }
+  const signOut = async () => { await supabase?.auth.signOut(); clearLocalOwnerCache(); setCloudUser(null); setPets([seedPet]); setPet(seedPet); setOwnerProfile(emptyOwnerProfile); setInbox([]); setAuthError('') }
   const uploadPhoto = async (file) => {
     if (!file || !supabase || !cloudUser || !pet._dbId) return
     if (!file.type.startsWith('image/')) { setAuthError('Please choose an image file.'); return }
@@ -268,7 +283,7 @@ function App() {
       if (error) { setAuthError(error.message); notify('error', 'The profile could not be deleted.'); return }
     }
     const remaining = pets.filter(item => (item._dbId || item.id) !== (pet._dbId || pet.id))
-    setPets(remaining); setPet(remaining[0]); setSaved(false); setAuthError(''); localStorage.setItem('reunite-pets', JSON.stringify(remaining)); localStorage.setItem('reunite-pet', JSON.stringify(remaining[0])); go('home'); notify('success', 'Pet profile deleted.')
+    setPets(remaining); setPet(remaining[0]); setSaved(false); setAuthError(''); if (!isCloudMode) { localStorage.setItem('reunite-pets', JSON.stringify(remaining)); localStorage.setItem('reunite-pet', JSON.stringify(remaining[0])) } go('home'); notify('success', 'Pet profile deleted.')
   }
   const regenerateQr = async () => {
     if (!window.confirm(`Replace ${pet.name}'s QR code? The current QR code and link will stop working.`)) return
@@ -289,7 +304,7 @@ function App() {
     }
     const updated = { ...pet, id: nextToken, public_token: nextToken }
     setPet(updated); setPets(current => current.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))
-    localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item)))
+    if (!isCloudMode) { localStorage.setItem('reunite-pet', JSON.stringify(updated)); localStorage.setItem('reunite-pets', JSON.stringify(pets.map(item => (item._dbId || item.id) === (pet._dbId || pet.id) ? updated : item))) }
     setQrBusy(false); notify('success', 'New QR ready. The old one no longer works.')
   }
   const openInbox = async () => { await loadInbox(); go('inbox') }
@@ -394,7 +409,7 @@ function AccountDrawer({ open, close, go, inboxCount, theme, setTheme }) {
   }, [open, close])
   if (!open) return null
   const navigate = next => { close(); go(next) }
-  const logout = async () => { await supabase?.auth.signOut(); close(); history.replaceState(null, '', location.pathname) }
+  const logout = async () => { await supabase?.auth.signOut(); clearLocalOwnerCache(); close(); history.replaceState(null, '', location.pathname) }
   return <><div className="drawer-scrim" aria-hidden="true" /><aside className="account-drawer" role="dialog" aria-modal="true" aria-label="Account menu"><div className="drawer-header"><div><div className="eyebrow">ACCOUNT</div><h2>Leo Reunite</h2><p>Your private pet identity</p></div><button className="drawer-close" onClick={close} aria-label="Close account menu">×</button></div><div className="drawer-profile"><span className="drawer-avatar">RD</span><div><strong>Owner account</strong><span>Manage your safe home</span></div></div><div className="drawer-section"><div className="drawer-section-label">QUICK ACCESS</div><button className="drawer-link" onClick={() => navigate('home')}><span>⌂</span><span>Dashboard</span></button><button className="drawer-link" onClick={() => navigate('inbox')}><span>✉</span><span>Inbox{inboxCount ? <b className="drawer-count">{inboxCount}</b> : null}</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('edit')}><span>✎</span><span>Pet profile settings</span><span className="drawer-arrow">›</span></button></div><div className="drawer-section"><div className="drawer-section-label">APPEARANCE</div><div className="theme-picker"><button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>Light</button><button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>Dark</button><button className={theme === 'auto' ? 'selected' : ''} onClick={() => setTheme('auto')}>Auto</button></div><small className="drawer-hint">Auto follows your device preference.</small></div><div className="drawer-section drawer-secondary"><button className="drawer-link" onClick={() => navigate('privacy')}><span>⌕</span><span>Privacy</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('terms')}><span>▤</span><span>Terms</span><span className="drawer-arrow">›</span></button></div><div className="drawer-footer"><button className="drawer-logout" onClick={logout}>Log out <span>→</span></button><small>Leo Reunite · A safer way home</small></div></aside></>
 }
 
@@ -405,7 +420,7 @@ function OwnerAvatar({ profile, className = '' }) {
 function Shell({ children, go, inboxCount = 0, feedback, dismissFeedback }) {
   const [accountOpen, setAccountOpen] = useState(false)
   const [theme, setTheme] = useState(getSavedTheme)
-  const [profile, setProfile] = useState(loadOwnerProfileLocal)
+  const [profile, setProfile] = useState(() => isCloudMode ? emptyOwnerProfile : loadOwnerProfileLocal())
   const avatarTimer = useRef(null)
   const avatarLongPress = useRef(false)
   useEffect(() => {
@@ -452,7 +467,7 @@ function AccountDrawerV2({ open, close, go, inboxCount, theme, setTheme, profile
   }, [open, close])
   if (!open) return null
   const navigate = next => { close(); go(next) }
-  const logout = async () => { await supabase?.auth.signOut(); close(); history.replaceState(null, '', location.pathname) }
+  const logout = async () => { await supabase?.auth.signOut(); clearLocalOwnerCache(); close(); history.replaceState(null, '', location.pathname) }
   return <><div className="drawer-scrim" aria-hidden="true" /><aside className="account-drawer" role="dialog" aria-modal="true" aria-label="Account menu"><div className="drawer-header"><div><div className="eyebrow">ACCOUNT</div><h2>Leo Reunite</h2><p>Your private pet identity</p></div><button className="drawer-close" onClick={close} aria-label="Close account menu">×</button></div><button className="drawer-profile drawer-profile-button" onClick={() => navigate('account')}><OwnerAvatar profile={profile} className="drawer-avatar" /><div><strong>{publicOwnerName(profile)}</strong><span>{profile.full_name || 'Edit your profile'}</span></div><span className="drawer-arrow">›</span></button><div className="drawer-section"><div className="drawer-section-label">QUICK ACCESS</div><button className="drawer-link" onClick={() => navigate('home')}><span>⌂</span><span>Dashboard</span></button><button className="drawer-link" onClick={() => navigate('inbox')}><span>✉</span><span>Inbox{inboxCount ? <b className="drawer-count">{inboxCount}</b> : null}</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('edit')}><span>✎</span><span>Pet profile settings</span><span className="drawer-arrow">›</span></button></div><div className="drawer-section"><div className="drawer-section-label">APPEARANCE</div><div className="theme-picker"><button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>Light</button><button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>Dark</button><button className={theme === 'auto' ? 'selected' : ''} onClick={() => setTheme('auto')}>Auto</button></div><small className="drawer-hint">Auto follows your device preference.</small></div><div className="drawer-section drawer-secondary"><button className="drawer-link" onClick={() => navigate('privacy')}><span>⌕</span><span>Privacy</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('terms')}><span>▤</span><span>Terms</span><span className="drawer-arrow">›</span></button></div><div className="drawer-footer"><button className="drawer-logout" onClick={logout}>Log out <span>→</span></button><small>Leo Reunite · A safer way home</small></div></aside></>
 }
 
