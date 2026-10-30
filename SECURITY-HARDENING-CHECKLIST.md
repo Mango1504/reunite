@@ -4,7 +4,7 @@ This checklist tracks fixes that have been implemented, deployed, and verified. 
 
 ## P0 — before wider public launch
 
-- [ ] Remove legacy anonymous messaging RPCs and keep only device-scoped public messaging APIs.
+- [x] Remove legacy anonymous messaging RPCs and keep only device-scoped public messaging APIs. User confirmed the live Supabase migration ran; automated result inspection was blocked by the browser permission.
 - [ ] Harden every `SECURITY DEFINER` function with an empty search path and fully qualified names.
 - [ ] Enforce message request status, expiry, and blocking rules in the database.
 - [ ] Stop persisting cloud account data in `localStorage` after logout.
