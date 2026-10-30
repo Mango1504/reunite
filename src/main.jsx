@@ -5,6 +5,7 @@ import { isCloudMode, supabase } from './lib/supabase'
 import './styles.css'
 import './retention.css'
 import './boop-theme.css'
+import './responsive.css'
 
 const seedPet = {
   id: 'pet_8f4a9c2e', name: 'Milo', breed: 'Golden Retriever', species: 'Dog',
