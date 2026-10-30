@@ -95,7 +95,7 @@ alter table public.messages add column if not exists seen_at timestamptz;
 create or replace function public.ensure_message_delivery_status()
 returns trigger
 language plpgsql
-set search_path = public
+set search_path = ''
 as $$
 begin
   new.delivered_at := coalesce(new.delivered_at, now());
@@ -110,7 +110,7 @@ create or replace function public.broadcast_reunite_message()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, realtime
+set search_path = ''
 as $$
 declare
   v_token text;
@@ -178,7 +178,7 @@ create policy "public can view Reunite pet photos" on storage.objects for select
 
 create or replace function public.get_public_pet_v3(p_token text)
 returns table (public_token text, name text, species text, breed text, age text, note text, public_photo boolean, public_note boolean, missing boolean, photo_url text, owner_username text, owner_name text, owner_avatar_url text, owner_bio text, owner_city text, owner_reunion_note text)
-language sql security definer set search_path = public
+language sql security definer set search_path = ''
 as $$
   select p.public_token, p.name, p.species, p.breed, p.age,
     case when p.public_note then p.note else '' end,
@@ -201,7 +201,7 @@ create or replace function public.mark_public_messages_seen_v2(p_token text, p_d
 returns void
 language sql
 security definer
-set search_path = public
+set search_path = ''
 as $$
   update public.messages m
     set delivered_at = coalesce(m.delivered_at, now()), seen_at = coalesce(m.seen_at, now())
@@ -215,7 +215,7 @@ create or replace function public.send_public_message_v2(p_token text, p_device_
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_pet public.pets;
@@ -245,7 +245,7 @@ create or replace function public.send_public_reply_v2(p_token text, p_device_id
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_body text := btrim(coalesce(p_body, ''));
@@ -262,7 +262,7 @@ create or replace function public.get_public_messages_v5(p_token text, p_device_
 returns table(id uuid, conversation_id uuid, request_status text, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 begin
   if p_session_id is not null and p_session_id <> p_device_id then
@@ -283,7 +283,7 @@ create or replace function public.report_public_pet(p_token text, p_reason text)
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_pet_id uuid;
@@ -343,7 +343,7 @@ create or replace function public.delete_expired_reunite_conversations()
 returns void
 language sql
 security definer
-set search_path = public
+set search_path = ''
 as $$
   delete from public.conversations where expires_at <= now();
 $$;
@@ -353,7 +353,7 @@ create or replace function public.delete_my_reunite_data()
 returns void
 language plpgsql
 security definer
-set search_path = public, storage
+set search_path = ''
 as $$
 begin
   if auth.uid() is null then raise exception 'You must be signed in'; end if;
@@ -368,7 +368,7 @@ create or replace function public.delete_my_reunite_pet(p_pet_id uuid)
 returns void
 language plpgsql
 security definer
-set search_path = public, storage
+set search_path = ''
 as $$
 declare
   v_photo_url text;
@@ -397,7 +397,7 @@ create or replace function public.regenerate_pet_qr(p_pet_id uuid)
 returns text
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_new_token text;
