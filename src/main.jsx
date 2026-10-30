@@ -337,7 +337,7 @@ function App() {
   const reportPet = async reason => {
     if (!supabase) return new Error('Reporting is unavailable in demo mode.')
     const { token } = getFinderRoute()
-    const { error } = await supabase.rpc('report_public_pet', { p_token: token, p_reason: reason })
+    const { error } = await supabase.rpc('report_public_pet_v2', { p_token: token, p_reason: reason, p_device_id: getFinderDeviceId(token) })
     return error || null
   }
 

@@ -13,6 +13,7 @@ drop function if exists public.get_public_messages_v4(text, text, text);
 drop function if exists public.send_public_message(text, text, double precision, double precision, double precision);
 drop function if exists public.send_public_reply(text, uuid, text, double precision, double precision, double precision);
 drop function if exists public.mark_public_messages_seen(text);
+drop function if exists public.report_public_pet(text, text);
 
 create table if not exists public.pets (
   id uuid primary key default gen_random_uuid(),
@@ -68,8 +69,10 @@ create table if not exists public.profile_reports (
   id uuid primary key default gen_random_uuid(),
   pet_id uuid not null references public.pets(id) on delete cascade,
   reason text not null check (char_length(reason) between 1 and 500),
+  reporter_device_id text,
   created_at timestamptz not null default now()
 );
+alter table public.profile_reports add column if not exists reporter_device_id text;
 
 create table if not exists public.owner_profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -232,6 +235,8 @@ begin
   select * into v_pet from public.pets where public_token = p_token limit 1;
   if v_pet.id is null then raise exception 'Pet profile not found'; end if;
   if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id where c.pet_id = v_pet.id and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 20 then raise exception 'This profile has reached its message limit for now. Please try again later.'; end if;
+  if exists (select 1 from public.messages m join public.conversations c on c.id = m.conversation_id where c.pet_id = v_pet.id and c.finder_device_id = v_device and m.sender_role = 'finder' and m.created_at > now() - interval '30 seconds') then raise exception 'Please wait a moment before sending another message.'; end if;
+  if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id where c.pet_id = v_pet.id and c.finder_device_id = v_device and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 8 then raise exception 'This finder session has reached its message limit for now.'; end if;
   if exists (select 1 from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and blocked_at is not null) then raise exception 'This finder has been blocked by the owner'; end if;
   if exists (select 1 from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and request_status = 'ignored' and expires_at > now()) then raise exception 'This message request was ignored by the owner'; end if;
   select id into v_conversation from public.conversations where pet_id = v_pet.id and finder_device_id = v_device and blocked_at is null and expires_at > now() order by created_at desc limit 1;
@@ -256,6 +261,7 @@ declare
 begin
   if char_length(v_body) < 1 or char_length(v_body) > 2000 then raise exception 'Message must be between 1 and 2000 characters'; end if;
   if not exists (select 1 from public.conversations c join public.pets p on p.id = c.pet_id where c.id = p_conversation and p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.request_status = 'accepted' and c.expires_at > now()) then raise exception 'Conversation is waiting for owner approval, blocked, or expired'; end if;
+  if exists (select 1 from public.messages m where m.conversation_id = p_conversation and m.sender_role = 'finder' and m.created_at > now() - interval '10 seconds') then raise exception 'Please wait a moment before sending another message.'; end if;
   insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy) values (p_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
 end;
 $$;
@@ -283,7 +289,7 @@ $$;
 revoke all on function public.get_public_messages_v5(text, text, text) from public;
 grant execute on function public.get_public_messages_v5(text, text, text) to anon, authenticated;
 
-create or replace function public.report_public_pet(p_token text, p_reason text)
+create or replace function public.report_public_pet_v2(p_token text, p_reason text, p_device_id text)
 returns void
 language plpgsql
 security definer
@@ -292,20 +298,27 @@ as $$
 declare
   v_pet_id uuid;
   v_reason text := btrim(coalesce(p_reason, ''));
+  v_device text := btrim(coalesce(p_device_id, ''));
 begin
   if char_length(v_reason) < 1 or char_length(v_reason) > 500 then
     raise exception 'Report must be between 1 and 500 characters';
+  end if;
+  if char_length(v_device) < 16 or char_length(v_device) > 100 then
+    raise exception 'Reporter device identity is invalid';
   end if;
   select id into v_pet_id from public.pets where public_token = p_token limit 1;
   if v_pet_id is null then raise exception 'Pet profile not found'; end if;
   if (select count(*) from public.profile_reports where pet_id = v_pet_id and created_at > now() - interval '1 hour') >= 5 then
     raise exception 'This profile has reached its report limit for now';
   end if;
-  insert into public.profile_reports (pet_id, reason) values (v_pet_id, v_reason);
+  if (select count(*) from public.profile_reports where pet_id = v_pet_id and reporter_device_id = v_device and created_at > now() - interval '1 hour') >= 2 then
+    raise exception 'This finder session has reached its report limit for now';
+  end if;
+  insert into public.profile_reports (pet_id, reason, reporter_device_id) values (v_pet_id, v_reason, v_device);
 end;
 $$;
-revoke all on function public.report_public_pet(text, text) from public;
-grant execute on function public.report_public_pet(text, text) to anon, authenticated;
+revoke all on function public.report_public_pet_v2(text, text, text) from public;
+grant execute on function public.report_public_pet_v2(text, text, text) to anon, authenticated;
 
 drop policy if exists "owners can manage conversations" on public.conversations;
 create policy "owners can manage conversations" on public.conversations for all
