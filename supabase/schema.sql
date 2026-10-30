@@ -305,7 +305,13 @@ grant execute on function public.report_public_pet(text, text) to anon, authenti
 
 drop policy if exists "owners can manage conversations" on public.conversations;
 create policy "owners can manage conversations" on public.conversations for all
-  using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+  using (
+    (select auth.uid()) = owner_id
+    and exists (select 1 from public.pets p where p.id = pet_id and p.owner_id = (select auth.uid()))
+  ) with check (
+    (select auth.uid()) = owner_id
+    and exists (select 1 from public.pets p where p.id = pet_id and p.owner_id = (select auth.uid()))
+  );
 drop policy if exists "scanners can start a conversation" on public.conversations;
 drop policy if exists "scanners and owners can send messages" on public.messages;
 drop policy if exists "conversation participants can read messages" on public.messages;
@@ -313,9 +319,17 @@ drop policy if exists "owners can send replies" on public.messages;
 create policy "conversation participants can read messages" on public.messages for select
   using (exists (select 1 from public.conversations c where c.id = conversation_id and c.owner_id = auth.uid()));
 create policy "owners can send replies" on public.messages for insert
-  with check (sender_role = 'owner' and exists (
-    select 1 from public.conversations c where c.id = conversation_id and c.owner_id = auth.uid()
-  ));
+  with check (
+    sender_role = 'owner'
+    and exists (
+      select 1 from public.conversations c
+      where c.id = conversation_id
+        and c.owner_id = (select auth.uid())
+        and c.request_status = 'accepted'
+        and c.blocked_at is null
+        and c.expires_at > now()
+    )
+  );
 
 create index if not exists conversations_owner_created_idx
   on public.conversations (owner_id, created_at desc);
