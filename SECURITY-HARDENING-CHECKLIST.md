@@ -8,12 +8,12 @@ This checklist tracks fixes that have been implemented, deployed, and verified. 
 - [x] Harden every `SECURITY DEFINER` function with an empty search path and fully qualified names. User confirmed the live migration ran; automated result inspection was blocked by the browser permission.
 - [x] Enforce message request status, expiry, and blocking rules in the database. User confirmed the live migration ran; automated result inspection was blocked by the browser permission.
 - [x] Stop persisting cloud account data in `localStorage` after logout. Deployed in `562dead` and verified as the latest successful Render deployment.
-- [ ] Protect pet photos with an intentional private/public storage model and signed URLs where needed.
-- [ ] Add abuse protection for anonymous messages and reports.
+- [x] Protect pet photos with an intentional public-media model, server-side type/size limits, and owner deletion controls. Deployed in `d530b4b`; storage migration user-confirmed.
+- [x] Add device-scoped cooldowns and abuse limits for anonymous messages and reports. User confirmed the live migration ran; automated result inspection was blocked by the browser permission.
 
 ## P1 — launch quality
 
-- [ ] Strengthen password policy and improve confirmation/reset states.
+- [ ] Strengthen password policy and improve confirmation/reset states. Frontend minimum is now 8 characters and is live in `9f67d4d`; Supabase Auth minimum and leaked-password protection still need to be set in the dashboard.
 - [ ] Add complete account deletion and reconcile retention wording with database behavior.
 - [ ] Add security headers and connect the stable production domain.
 - [ ] Remove obsolete UI/API code paths and add automated auth/messaging tests.
