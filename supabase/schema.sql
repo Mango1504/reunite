@@ -368,7 +368,7 @@ begin
 end
 $$;
 
--- Retain finder conversations for 30 days, then remove the conversation and its
+-- Retain finder conversations for 24 hours, then remove the conversation and its
 -- messages together through the existing ON DELETE CASCADE relationship.
 create or replace function public.delete_expired_reunite_conversations()
 returns void
@@ -380,7 +380,8 @@ as $$
 $$;
 revoke all on function public.delete_expired_reunite_conversations() from public;
 
-create or replace function public.delete_my_reunite_data()
+drop function if exists public.delete_my_reunite_data();
+create or replace function public.delete_my_reunite_account()
 returns void
 language plpgsql
 security definer
@@ -389,11 +390,13 @@ as $$
 begin
   if auth.uid() is null then raise exception 'You must be signed in'; end if;
   delete from storage.objects where bucket_id = 'reunite-media' and owner_id = auth.uid();
+  delete from public.owner_profiles where id = auth.uid();
   delete from public.pets where owner_id = auth.uid();
+  delete from auth.users where id = auth.uid();
 end;
 $$;
-revoke all on function public.delete_my_reunite_data() from public;
-grant execute on function public.delete_my_reunite_data() to authenticated;
+revoke all on function public.delete_my_reunite_account() from public;
+grant execute on function public.delete_my_reunite_account() to authenticated;
 
 create or replace function public.delete_my_reunite_pet(p_pet_id uuid)
 returns void
