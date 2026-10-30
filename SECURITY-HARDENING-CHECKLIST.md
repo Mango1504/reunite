@@ -6,7 +6,7 @@ This checklist tracks fixes that have been implemented, deployed, and verified. 
 
 - [x] Remove legacy anonymous messaging RPCs and keep only device-scoped public messaging APIs. User confirmed the live Supabase migration ran; automated result inspection was blocked by the browser permission.
 - [x] Harden every `SECURITY DEFINER` function with an empty search path and fully qualified names. User confirmed the live migration ran; automated result inspection was blocked by the browser permission.
-- [ ] Enforce message request status, expiry, and blocking rules in the database.
+- [x] Enforce message request status, expiry, and blocking rules in the database. User confirmed the live migration ran; automated result inspection was blocked by the browser permission.
 - [ ] Stop persisting cloud account data in `localStorage` after logout.
 - [ ] Protect pet photos with an intentional private/public storage model and signed URLs where needed.
 - [ ] Add abuse protection for anonymous messages and reports.
