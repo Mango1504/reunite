@@ -58,6 +58,22 @@ create table if not exists public.profile_reports (
   reason text not null check (char_length(reason) between 1 and 500),
   created_at timestamptz not null default now()
 );
+
+create table if not exists public.owner_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username text unique check (username is null or (char_length(username) between 3 and 32 and username ~ '^[A-Za-z0-9._-]+$')),
+  full_name text not null default '',
+  avatar_url text,
+  public_avatar boolean not null default false,
+  public_name boolean not null default false,
+  bio text not null default '',
+  public_bio boolean not null default false,
+  city text not null default '',
+  public_city boolean not null default false,
+  reunion_note text not null default '',
+  public_reunion_note boolean not null default false,
+  updated_at timestamptz not null default now()
+);
 alter table public.messages add column if not exists location_lat double precision;
 alter table public.messages add column if not exists location_lng double precision;
 alter table public.messages add column if not exists location_accuracy double precision;
@@ -126,9 +142,15 @@ alter table public.pets enable row level security;
 alter table public.conversations enable row level security;
 alter table public.messages enable row level security;
 alter table public.profile_reports enable row level security;
+alter table public.owner_profiles enable row level security;
 
+drop policy if exists "owners can manage their pets" on public.pets;
 create policy "owners can manage their pets" on public.pets for all
   using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+drop policy if exists "owners can manage their owner profile" on public.owner_profiles;
+create policy "owners can manage their owner profile" on public.owner_profiles for all
+  using (auth.uid() = id) with check (auth.uid() = id);
 
 -- Do not grant anon SELECT on pets: that would expose owner_id and private notes.
 -- Scanners receive only this deliberately limited response through the function.
@@ -146,6 +168,9 @@ grant execute on function public.get_public_pet(text) to anon, authenticated;
 
 alter table public.pets add column if not exists photo_url text;
 insert into storage.buckets (id, name, public) values ('reunite-media', 'reunite-media', true) on conflict (id) do nothing;
+drop policy if exists "owners can upload pet photos" on storage.objects;
+drop policy if exists "owners can update pet photos" on storage.objects;
+drop policy if exists "public can view Reunite pet photos" on storage.objects;
 create policy "owners can upload pet photos" on storage.objects for insert to authenticated
   with check (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "owners can update pet photos" on storage.objects for update to authenticated
@@ -165,6 +190,27 @@ as $$
 $$;
 revoke all on function public.get_public_pet_v2(text) from public;
 grant execute on function public.get_public_pet_v2(text) to anon, authenticated;
+
+create or replace function public.get_public_pet_v3(p_token text)
+returns table (public_token text, name text, species text, breed text, age text, note text, public_photo boolean, public_note boolean, missing boolean, photo_url text, owner_username text, owner_name text, owner_avatar_url text, owner_bio text, owner_city text, owner_reunion_note text)
+language sql security definer set search_path = public
+as $$
+  select p.public_token, p.name, p.species, p.breed, p.age,
+    case when p.public_note then p.note else '' end,
+    p.public_photo, p.public_note, p.missing,
+    case when p.public_photo then p.photo_url else null end,
+    op.username,
+    case when op.public_name then op.full_name else null end,
+    case when op.public_avatar then op.avatar_url else null end,
+    case when op.public_bio then op.bio else null end,
+    case when op.public_city then op.city else null end,
+    case when op.public_reunion_note then op.reunion_note else null end
+  from public.pets p
+  left join public.owner_profiles op on op.id = p.owner_id
+  where p.public_token = p_token limit 1;
+$$;
+revoke all on function public.get_public_pet_v3(text) from public;
+grant execute on function public.get_public_pet_v3(text) to anon, authenticated;
 
 drop function if exists public.send_public_message(text, text);
 create or replace function public.send_public_message(p_token text, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
@@ -401,6 +447,7 @@ $$;
 revoke all on function public.report_public_pet(text, text) from public;
 grant execute on function public.report_public_pet(text, text) to anon, authenticated;
 
+drop policy if exists "owners can manage conversations" on public.conversations;
 create policy "owners can manage conversations" on public.conversations for all
   using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 drop policy if exists "scanners can start a conversation" on public.conversations;
@@ -421,7 +468,18 @@ create index if not exists conversations_pet_device_idx
 create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);
 
-alter publication supabase_realtime add table public.messages;
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'messages'
+  ) then
+    alter publication supabase_realtime add table public.messages;
+  end if;
+end
+$$;
 
 -- Retain finder conversations for 30 days, then remove the conversation and its
 -- messages together through the existing ON DELETE CASCADE relationship.

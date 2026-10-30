@@ -44,6 +44,25 @@ function getFinderRoute() {
   return { token: parts[0] || '', sessionId: parts[1] || null }
 }
 
+const emptyOwnerProfile = { username: '', full_name: '', avatar_url: '', public_avatar: false, public_name: false, bio: '', public_bio: false, city: '', public_city: false, reunion_note: '', public_reunion_note: false }
+
+function loadOwnerProfileLocal() {
+  try { return { ...emptyOwnerProfile, ...(JSON.parse(localStorage.getItem('leo-owner-profile')) || {}) } } catch { return emptyOwnerProfile }
+}
+
+function saveOwnerProfileLocal(profile) {
+  try { localStorage.setItem('leo-owner-profile', JSON.stringify(profile)); window.dispatchEvent(new Event('leo-owner-profile')) } catch {}
+}
+
+function ownerInitials(profile) {
+  const source = profile?.username || profile?.full_name || 'LR'
+  return source.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'LR'
+}
+
+function publicOwnerName(profile) {
+  return profile?.username ? `@${profile.username}` : 'Leo Reunite member'
+}
+
 function App() {
   const [pets, setPets] = useState(loadPets)
   const [pet, setPet] = useState(() => pets[0] || seedPet)
@@ -52,6 +71,7 @@ function App() {
   const [sent, setSent] = useState(false)
   const [saved, setSaved] = useState(false)
   const [cloudUser, setCloudUser] = useState(null)
+  const [ownerProfile, setOwnerProfile] = useState(loadOwnerProfileLocal)
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
@@ -74,19 +94,19 @@ function App() {
       if (!active) return
       setCloudUser(data.session?.user ?? null)
       if (data.session?.user && isAuthCallback()) setNeedsPassword(true)
-      if (data.session?.user) await loadCloudPet(data.session.user.id)
+      if (data.session?.user) { await loadCloudPet(data.session.user.id); await loadOwnerProfile(data.session.user.id) }
     })
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       setCloudUser(session?.user ?? null)
       if (session?.user && (event === 'PASSWORD_RECOVERY' || isAuthCallback())) setNeedsPassword(true)
-      if (session?.user) { loadCloudPet(session.user.id); loadInbox(session.user.id) }
+      if (session?.user) { loadCloudPet(session.user.id); loadOwnerProfile(session.user.id); loadInbox(session.user.id) }
     })
     return () => { active = false; listener.subscription.unsubscribe() }
   }, [])
   useEffect(() => {
     if (screen === 'scan' && supabase) {
       const { token } = getFinderRoute()
-      supabase.rpc('get_public_pet_v2', { p_token: token }).then(({ data }) => {
+      supabase.rpc('get_public_pet_v3', { p_token: token }).then(({ data }) => {
         if (data?.[0]) setPet(current => ({ ...current, ...data[0], id: data[0].public_token, publicPhoto: data[0].public_photo, publicNote: data[0].public_note, photo: data[0].photo_url || '🐕' }))
       })
       supabase.rpc('mark_public_messages_seen_v2', { p_token: token, p_device_id: getFinderDeviceId(token) })
@@ -112,6 +132,30 @@ function App() {
       if (!createError && created) { const firstPet = { ...created, id: created.public_token, _dbId: created.id, photo: created.photo_url || '🐕', publicPhoto: created.public_photo, publicNote: created.public_note }; setPets([firstPet]); setPet(firstPet) }
       if (createError) setAuthError(createError.message)
     }
+  }
+  async function loadOwnerProfile(ownerId) {
+    if (!supabase || !ownerId) return
+    const { data, error } = await supabase.from('owner_profiles').select('*').eq('id', ownerId).maybeSingle()
+    if (error) return
+    const profile = { ...emptyOwnerProfile, ...(data || { id: ownerId }) }
+    if (!data) {
+      const { data: created } = await supabase.from('owner_profiles').upsert({ id: ownerId }).select().single()
+      if (created) { setOwnerProfile({ ...emptyOwnerProfile, ...created }); saveOwnerProfileLocal({ ...emptyOwnerProfile, ...created }); return }
+    }
+    setOwnerProfile(profile); saveOwnerProfileLocal(profile)
+  }
+  async function saveOwnerProfile(profile) {
+    const next = { ...emptyOwnerProfile, ...profile }
+    if (supabase && cloudUser) {
+      const payload = { ...next, id: cloudUser.id, username: next.username.trim() || null }
+      const { data, error } = await supabase.from('owner_profiles').upsert(payload).select().single()
+      if (error) { notify('error', 'Your account profile could not be saved.'); return false }
+      setOwnerProfile({ ...emptyOwnerProfile, ...data }); saveOwnerProfileLocal({ ...emptyOwnerProfile, ...data })
+    } else {
+      setOwnerProfile(next); saveOwnerProfileLocal(next)
+    }
+    notify('success', 'Account profile saved.')
+    return true
   }
   async function loadInbox(ownerId = cloudUser?.id) {
     if (!supabase || !ownerId) return
@@ -259,6 +303,7 @@ function App() {
   }
 
   if (screen === 'scan') return <ScanPageRealtime pet={pet} message={message} setMessage={setMessage} sent={sent} setSent={setSent} sendFinderMessage={sendFinderMessage} reportPet={reportPet} />
+  if (screen === 'account') return <OwnerProfilePage profile={ownerProfile} cloudUser={cloudUser} go={go} onProfileChanged={saveOwnerProfile} notify={notify} />
   if (screen === 'privacy') return <PrivacyPage go={go} />
   if (screen === 'terms') return <TermsPage go={go} />
   if (isProductionMisconfigured) return <ConfigurationErrorPage />
@@ -266,7 +311,7 @@ function App() {
   if (isCloudMode && !cloudUser && screen !== 'auth') return <LandingPage go={go} />
   if (isCloudMode && !cloudUser) return <AuthPage authenticate={authenticate} sendPasswordReset={sendPasswordReset} busy={authBusy} error={authError} />
   if (screen === 'inbox') return <InboxPageWithRequests inbox={inbox} error={inboxError} reload={loadInbox} go={go} supabase={supabase} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
-  if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
+  if (screen === 'edit') return <EditPage pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} update={update} saveProfile={saveProfile} saved={saved} go={go} deletePet={deletePet} uploadPhoto={uploadPhoto} ownerProfile={ownerProfile} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
   return <Dashboard pet={pet} pets={pets} selectPet={selectPet} createPet={createPet} toggleMissing={toggleMissing} publicUrl={publicUrl} go={go} cloudUser={cloudUser} signOut={signOut} cloudMode={isCloudMode} openInbox={openInbox} inboxCount={inbox.length} regenerateQr={regenerateQr} qrBusy={qrBusy} qrError={qrError} feedback={feedback} dismissFeedback={() => setFeedback(null)} />
 }
 
@@ -297,7 +342,7 @@ function TermsPage({ go }) {
   return <PublicTextPage go={go} title="Simple, safe use." eyebrow="TERMS"><p>Leo Reunite helps pet owners share a private contact route when a pet is found. It is not an emergency service or a guarantee that a pet will be recovered.</p><h2>Use responsibly</h2><p>Only upload information and photos you have the right to share. Do not use the service to harass, impersonate, threaten, or expose another person.</p><h2>Finder safety</h2><p>Meet in public places, avoid sharing sensitive personal information, and contact local authorities or animal services when appropriate.</p><h2>Availability</h2><p>We work to keep Leo Reunite available, but online services can experience outages. Keep a physical tag or local emergency contact as a backup.</p><p className="legal-note">These starter terms should be reviewed by a qualified professional before public launch.</p></PublicTextPage>
 }
 
-function Shell({ children, go, inboxCount = 0, feedback, dismissFeedback }) {
+function LegacyShell({ children, go, inboxCount = 0, feedback, dismissFeedback }) {
   const [accountOpen, setAccountOpen] = useState(false)
   const [theme, setTheme] = useState(getSavedTheme)
   useEffect(() => {
@@ -341,6 +386,64 @@ function AccountDrawer({ open, close, go, inboxCount, theme, setTheme }) {
   const navigate = next => { close(); go(next) }
   const logout = async () => { await supabase?.auth.signOut(); close(); history.replaceState(null, '', location.pathname) }
   return <><div className="drawer-scrim" aria-hidden="true" /><aside className="account-drawer" role="dialog" aria-modal="true" aria-label="Account menu"><div className="drawer-header"><div><div className="eyebrow">ACCOUNT</div><h2>Leo Reunite</h2><p>Your private pet identity</p></div><button className="drawer-close" onClick={close} aria-label="Close account menu">×</button></div><div className="drawer-profile"><span className="drawer-avatar">RD</span><div><strong>Owner account</strong><span>Manage your safe home</span></div></div><div className="drawer-section"><div className="drawer-section-label">QUICK ACCESS</div><button className="drawer-link" onClick={() => navigate('home')}><span>⌂</span><span>Dashboard</span></button><button className="drawer-link" onClick={() => navigate('inbox')}><span>✉</span><span>Inbox{inboxCount ? <b className="drawer-count">{inboxCount}</b> : null}</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('edit')}><span>✎</span><span>Pet profile settings</span><span className="drawer-arrow">›</span></button></div><div className="drawer-section"><div className="drawer-section-label">APPEARANCE</div><div className="theme-picker"><button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>Light</button><button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>Dark</button><button className={theme === 'auto' ? 'selected' : ''} onClick={() => setTheme('auto')}>Auto</button></div><small className="drawer-hint">Auto follows your device preference.</small></div><div className="drawer-section drawer-secondary"><button className="drawer-link" onClick={() => navigate('privacy')}><span>⌕</span><span>Privacy</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('terms')}><span>▤</span><span>Terms</span><span className="drawer-arrow">›</span></button></div><div className="drawer-footer"><button className="drawer-logout" onClick={logout}>Log out <span>→</span></button><small>Leo Reunite · A safer way home</small></div></aside></>
+}
+
+function OwnerAvatar({ profile, className = '' }) {
+  return <span className={`owner-avatar ${className}`}>{profile?.avatar_url ? <img src={profile.avatar_url} alt="Your profile" /> : ownerInitials(profile)}</span>
+}
+
+function Shell({ children, go, inboxCount = 0, feedback, dismissFeedback }) {
+  const [accountOpen, setAccountOpen] = useState(false)
+  const [theme, setTheme] = useState(getSavedTheme)
+  const [profile, setProfile] = useState(loadOwnerProfileLocal)
+  const avatarTimer = useRef(null)
+  const avatarLongPress = useRef(false)
+  useEffect(() => {
+    const syncProfile = () => setProfile(loadOwnerProfileLocal())
+    window.addEventListener('leo-owner-profile', syncProfile)
+    return () => window.removeEventListener('leo-owner-profile', syncProfile)
+  }, [])
+  useEffect(() => {
+    applyTheme(theme)
+    try { localStorage.setItem('leo-theme', theme) } catch {}
+    if (theme !== 'auto') return undefined
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    const syncSystemTheme = () => applyTheme('auto')
+    media?.addEventListener?.('change', syncSystemTheme)
+    return () => media?.removeEventListener?.('change', syncSystemTheme)
+  }, [theme])
+  useEffect(() => {
+    if (!accountOpen) return undefined
+    const closeOnEscape = event => { if (event.key === 'Escape') setAccountOpen(false) }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [accountOpen])
+  const clearAvatarTimer = () => { if (avatarTimer.current) window.clearTimeout(avatarTimer.current); avatarTimer.current = null }
+  const openAvatarMenu = () => {
+    if (avatarLongPress.current) { avatarLongPress.current = false; return }
+    clearAvatarTimer()
+    avatarTimer.current = window.setTimeout(() => setAccountOpen(true), 180)
+  }
+  const beginLongPress = () => {
+    clearAvatarTimer()
+    avatarTimer.current = window.setTimeout(() => { avatarLongPress.current = true; setAccountOpen(false); go('account') }, 600)
+  }
+  const openProfile = () => { clearAvatarTimer(); avatarLongPress.current = true; setAccountOpen(false); go('account') }
+  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark">L</span><span>Leo Reunite</span></button><nav><button onClick={() => go('home')}>Dashboard</button><button className="inbox-nav" onClick={() => go('inbox')}>Inbox{inboxCount ? <b>{inboxCount}</b> : null}</button><button onClick={() => go('edit')}>Pet profile</button><button className="avatar-button" onClick={openAvatarMenu} onDoubleClick={openProfile} onPointerDown={beginLongPress} onPointerUp={clearAvatarTimer} onPointerLeave={clearAvatarTimer} onPointerCancel={clearAvatarTimer} aria-label="Open account menu. Double-click or press and hold to edit profile." aria-expanded={accountOpen}><OwnerAvatar profile={profile} /><span className="avatar-edit" aria-hidden="true">✎</span></button></nav></header><AccountDrawerV2 open={accountOpen} close={() => setAccountOpen(false)} go={go} inboxCount={inboxCount} theme={theme} setTheme={setTheme} profile={profile} /><FeedbackToast feedback={feedback} onDismiss={dismissFeedback} />{children}</div>
+}
+
+function AccountDrawerV2({ open, close, go, inboxCount, theme, setTheme, profile }) {
+  useEffect(() => {
+    if (!open) return undefined
+    document.querySelector('.account-drawer .drawer-close')?.focus()
+    const closeOnOutside = event => { if (event.target.closest?.('.account-drawer') || event.target.closest?.('.avatar-button')) return; close() }
+    document.addEventListener('pointerdown', closeOnOutside)
+    return () => document.removeEventListener('pointerdown', closeOnOutside)
+  }, [open, close])
+  if (!open) return null
+  const navigate = next => { close(); go(next) }
+  const logout = async () => { await supabase?.auth.signOut(); close(); history.replaceState(null, '', location.pathname) }
+  return <><div className="drawer-scrim" aria-hidden="true" /><aside className="account-drawer" role="dialog" aria-modal="true" aria-label="Account menu"><div className="drawer-header"><div><div className="eyebrow">ACCOUNT</div><h2>Leo Reunite</h2><p>Your private pet identity</p></div><button className="drawer-close" onClick={close} aria-label="Close account menu">×</button></div><button className="drawer-profile drawer-profile-button" onClick={() => navigate('account')}><OwnerAvatar profile={profile} className="drawer-avatar" /><div><strong>{publicOwnerName(profile)}</strong><span>{profile.full_name || 'Edit your profile'}</span></div><span className="drawer-arrow">›</span></button><div className="drawer-section"><div className="drawer-section-label">QUICK ACCESS</div><button className="drawer-link" onClick={() => navigate('home')}><span>⌂</span><span>Dashboard</span></button><button className="drawer-link" onClick={() => navigate('inbox')}><span>✉</span><span>Inbox{inboxCount ? <b className="drawer-count">{inboxCount}</b> : null}</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('edit')}><span>✎</span><span>Pet profile settings</span><span className="drawer-arrow">›</span></button></div><div className="drawer-section"><div className="drawer-section-label">APPEARANCE</div><div className="theme-picker"><button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>Light</button><button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>Dark</button><button className={theme === 'auto' ? 'selected' : ''} onClick={() => setTheme('auto')}>Auto</button></div><small className="drawer-hint">Auto follows your device preference.</small></div><div className="drawer-section drawer-secondary"><button className="drawer-link" onClick={() => navigate('privacy')}><span>⌕</span><span>Privacy</span><span className="drawer-arrow">›</span></button><button className="drawer-link" onClick={() => navigate('terms')}><span>▤</span><span>Terms</span><span className="drawer-arrow">›</span></button></div><div className="drawer-footer"><button className="drawer-logout" onClick={logout}>Log out <span>→</span></button><small>Leo Reunite · A safer way home</small></div></aside></>
 }
 
 function FeedbackToast({ feedback, onDismiss }) {
@@ -408,8 +511,22 @@ function QRCard({ publicUrl }) { return <article className="qr-card"><QRCodePane
 
 function Step({ n, title, text }) { return <div className="step"><span>{n}</span><div><h4>{title}</h4><p>{text}</p></div></div> }
 
-function EditPage({ pet, pets, selectPet, createPet, update, saveProfile, saved, go, uploadPhoto, deletePet, feedback, dismissFeedback }) {
-  return <Shell go={go} feedback={feedback} dismissFeedback={dismissFeedback}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><div className="edit-pet-toolbar"><select value={pet._dbId || pet.id || ''} onChange={e => selectPet(pets.find(item => (item._dbId || item.id) === e.target.value) || pet)}>{pets.map(item => <option key={item._dbId || item.id} value={item._dbId || item.id}>{item.name}</option>)}</select><button className="outline-btn" type="button" onClick={createPet}>＋ Add pet</button></div><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="photo-upload"><div className="photo-preview">{typeof pet.photo === 'string' && pet.photo.startsWith('http') ? <img src={pet.photo} alt={`${pet.name} profile`} /> : pet.photo}</div><div><label>Pet photo<input type="file" accept="image/*" onChange={e => uploadPhoto(e.target.files?.[0])} /></label><small>JPG, PNG or WEBP · max 5 MB</small></div></div><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>@rishabh_reunite</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form><div className="data-controls"><div><strong>Remove this profile</strong><p>This removes {pet.name}, their conversations, and uploaded photo from your Leo Reunite account.</p></div><button type="button" className="danger-btn" onClick={() => window.confirm(`Delete ${pet.name}'s profile and conversations? This cannot be undone.`) && deletePet()}>Delete profile</button></div></main></Shell>
+function OwnerProfilePage({ profile, cloudUser, go, onProfileChanged, feedback, dismissFeedback }) {
+  const [draft, setDraft] = useState({ ...emptyOwnerProfile, ...profile })
+  const [busy, setBusy] = useState(false)
+  useEffect(() => setDraft({ ...emptyOwnerProfile, ...profile }), [profile])
+  const update = (key, value) => setDraft(current => ({ ...current, [key]: value }))
+  const submit = async event => {
+    event.preventDefault(); setBusy(true)
+    await onProfileChanged(draft)
+    setBusy(false)
+  }
+  return <Shell go={go} feedback={feedback} dismissFeedback={dismissFeedback}><main className="page edit-page account-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">ACCOUNT PROFILE</div><h1>Make it yours.</h1><p className="lead">Add a little context so a finder can recognize you and feel safe getting in touch.</p><form onSubmit={submit}><div className="form-grid"><label>Username<input value={draft.username} onChange={e => update('username', e.target.value.replace(/\s/g, ''))} minLength="3" maxLength="32" pattern="[A-Za-z0-9._-]+" placeholder="your_handle" /><small>Letters, numbers, dots, underscores, and hyphens.</small></label><label>Full name<input value={draft.full_name} onChange={e => update('full_name', e.target.value)} maxLength="80" placeholder="Your name" /></label><label>City or region<input value={draft.city} onChange={e => update('city', e.target.value)} maxLength="80" placeholder="Optional" /></label><label>Avatar URL<input type="url" value={draft.avatar_url || ''} onChange={e => update('avatar_url', e.target.value)} placeholder="https://…" /></label></div><label>Short bio<textarea value={draft.bio} onChange={e => update('bio', e.target.value)} maxLength="300" placeholder="A sentence about you or your pets." /></label><label>Reunion note<textarea value={draft.reunion_note} onChange={e => update('reunion_note', e.target.value)} maxLength="300" placeholder="Anything helpful for a safe reunion?" /></label><div className="visibility"><div><h3>Finder visibility</h3><p>Only enabled fields appear on a scanned pet profile.</p></div><label className="switch-row"><input type="checkbox" checked={draft.public_avatar} onChange={e => update('public_avatar', e.target.checked)} /><span>Avatar</span></label><label className="switch-row"><input type="checkbox" checked={draft.public_name} onChange={e => update('public_name', e.target.checked)} /><span>Name</span></label><label className="switch-row"><input type="checkbox" checked={draft.public_bio} onChange={e => update('public_bio', e.target.checked)} /><span>Bio</span></label><label className="switch-row"><input type="checkbox" checked={draft.public_city} onChange={e => update('public_city', e.target.checked)} /><span>City</span></label><label className="switch-row"><input type="checkbox" checked={draft.public_reunion_note} onChange={e => update('public_reunion_note', e.target.checked)} /><span>Reunion note</span></label></div><div className="form-footer"><span className="private-handle">{cloudUser ? 'Synced to your account' : 'Saved in this browser'}</span><button className="primary-btn" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save account profile'}</button></div></form></main></Shell>
+}
+
+function EditPage({ pet, pets, selectPet, createPet, update, saveProfile, saved, go, uploadPhoto, deletePet, ownerProfile, feedback, dismissFeedback }) {
+  const ownerHandle = ownerProfile?.username ? `@${ownerProfile.username}` : 'Not set'
+  return <Shell go={go} feedback={feedback} dismissFeedback={dismissFeedback}><main className="page edit-page"><button className="back-btn" onClick={() => go('home')}>← Back to dashboard</button><div className="eyebrow">PET PROFILE</div><h1>Tell their story.</h1><p className="lead">Only the information you choose to share will appear when someone scans the QR.</p><div className="edit-pet-toolbar"><select value={pet._dbId || pet.id || ''} onChange={e => selectPet(pets.find(item => (item._dbId || item.id) === e.target.value) || pet)}>{pets.map(item => <option key={item._dbId || item.id} value={item._dbId || item.id}>{item.name}</option>)}</select><button className="outline-btn" type="button" onClick={createPet}>＋ Add pet</button></div><form onSubmit={e => { e.preventDefault(); saveProfile() }}><div className="photo-upload"><div className="photo-preview">{typeof pet.photo === 'string' && pet.photo.startsWith('http') ? <img src={pet.photo} alt={`${pet.name} profile`} /> : pet.photo}</div><div><label>Pet photo<input type="file" accept="image/*" onChange={e => uploadPhoto(e.target.files?.[0])} /></label><small>JPG, PNG or WEBP · max 5 MB</small></div></div><div className="form-grid"><label>Pet name<input value={pet.name} onChange={e => update('name', e.target.value)} required /></label><label>Breed<input value={pet.breed} onChange={e => update('breed', e.target.value)} required /></label><label>Species<select value={pet.species} onChange={e => update('species', e.target.value)}><option>Dog</option><option>Cat</option><option>Other</option></select></label><label>Age<input value={pet.age} onChange={e => update('age', e.target.value)} /></label></div><label>Safety note<textarea value={pet.note} onChange={e => update('note', e.target.value)} placeholder="Anything a finder should know?" /></label><div className="visibility"><div><h3>Public profile</h3><p>These settings control what a finder can see.</p></div><label className="switch-row"><input type="checkbox" checked={pet.publicPhoto} onChange={e => update('publicPhoto', e.target.checked)} /><span>Pet photo</span></label><label className="switch-row"><input type="checkbox" checked={pet.publicNote} onChange={e => update('publicNote', e.target.checked)} /><span>Safety note</span></label><label className="switch-row"><input type="checkbox" checked={pet.missing} onChange={e => update('missing', e.target.checked)} /><span>Mark missing</span></label></div><div className="form-footer"><span className="private-handle">Owner handle: <strong>{ownerHandle}</strong> <small>public</small></span><button className="primary-btn" type="submit">{saved ? 'Saved ✓' : 'Save profile'}</button></div></form><div className="data-controls"><div><strong>Remove this profile</strong><p>This removes {pet.name}, their conversations, and uploaded photo from your Leo Reunite account.</p></div><button type="button" className="danger-btn" onClick={() => window.confirm(`Delete ${pet.name}'s profile and conversations? This cannot be undone.`) && deletePet()}>Delete profile</button></div></main></Shell>
 }
 
 function ScanPageRealtime({ pet, message, setMessage, sent, setSent, sendFinderMessage, reportPet }) {
@@ -559,4 +676,14 @@ function InboxPage({ inbox, error, reload, go, supabase }) {
   return <Shell go={go}><main className="page inbox-page"><div className="eyebrow">PRIVATE INBOX</div><div className="section-heading"><div><h3>Finder messages</h3><p className="lead">Reply without revealing your personal contact details.</p></div><button className="outline-btn" onClick={reload}>Refresh</button></div>{error && <div className="auth-error">{error}</div>}<div className="inbox-layout"><aside className="conversation-list">{inbox.length ? inbox.map(c => <button className={`conversation ${selected?.id === c.id ? 'active' : ''}`} onClick={() => setSelected(c)} key={c.id}><strong>{c.pets?.name || 'Your pet'}</strong><span>{new Date(c.created_at).toLocaleString()}</span><p>{c.messages?.[c.messages.length - 1]?.body || 'New message'}</p></button>) : <div className="empty-state">No finder messages yet.<br /><small>Messages sent from your pet’s QR page will appear here.</small></div>}</aside><section className="conversation-view">{selected ? <><div className="conversation-head"><div className="eyebrow">CONVERSATION</div><h3>{selected.pets?.name || 'Your pet'}</h3></div><div className="message-thread">{(selected.messages || []).sort((a,b) => new Date(a.created_at)-new Date(b.created_at)).map(m => <div className={`thread-message ${m.sender_role}`} key={m.id}><span>{m.sender_role === 'finder' ? 'Finder' : 'You'}</span><p>{m.body}</p>{m.location_lat && m.location_lng && <a className="location-link" href={`https://www.google.com/maps?q=${m.location_lat},${m.location_lng}`} target="_blank" rel="noreferrer">View approximate finder location →</a>}<small>{new Date(m.created_at).toLocaleString()}</small></div>)}</div><div className="reply-box"><textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Write a reply…" maxLength="2000" /><button className="primary-btn" onClick={send} disabled={!reply.trim() || busy}>{busy ? 'Sending…' : 'Reply'}</button></div></> : <div className="empty-state">Select a conversation to read and reply.</div>}</section></div></main></Shell>
 }
 
-createRoot(document.getElementById('root')).render(<App />)
+class AppErrorBoundary extends React.Component {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(error) { console.error('Leo Reunite crashed:', error) }
+  render() {
+    if (!this.state.hasError) return this.props.children
+    return <div className="auth-page"><div className="scan-brand"><span className="brand-mark">L</span> Leo Reunite</div><main className="auth-card"><div className="eyebrow">SORRY, SOMETHING WENT WRONG</div><h1>Let’s get you back safely.</h1><p>This page hit an unexpected error. Your saved account data is unchanged.</p><button className="primary-btn" onClick={() => window.location.reload()}>Reload Leo Reunite</button></main></div>
+  }
+}
+
+createRoot(document.getElementById('root')).render(<AppErrorBoundary><App /></AppErrorBoundary>)
