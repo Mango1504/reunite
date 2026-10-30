@@ -581,7 +581,7 @@ function ScanPage({ pet, message, setMessage, sent, setSent, sendFinderMessage, 
       const { data, error: replyError } = await supabase.rpc('get_public_messages', { p_token: token })
       if (active && !replyError) {
         setReplies(data || [])
-        if ((data || []).some(item => item.sender_role === 'owner')) supabase.rpc('mark_public_messages_seen', { p_token: token })
+      if ((data || []).some(item => item.sender_role === 'owner')) supabase.rpc('mark_public_messages_seen_v2', { p_token: token, p_device_id: deviceId })
       }
     }
     loadReplies()
@@ -590,7 +590,7 @@ function ScanPage({ pet, message, setMessage, sent, setSent, sendFinderMessage, 
         const incoming = payload?.record
         if (!active || !incoming?.id) return
         setReplies(current => current.some(item => item.id === incoming.id) ? current : [...current, incoming].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)))
-        if (incoming.sender_role === 'owner') supabase.rpc('mark_public_messages_seen', { p_token: token })
+        if (incoming.sender_role === 'owner') supabase.rpc('mark_public_messages_seen_v2', { p_token: token, p_device_id: deviceId })
       })
       .subscribe()
     const timer = window.setInterval(loadReplies, 30000)

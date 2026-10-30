@@ -2,6 +2,18 @@
 -- The public QR token is random and contains no owner contact details.
 create extension if not exists pgcrypto;
 
+-- Remove superseded public APIs. Keep only the device-scoped v2/v5 messaging
+-- functions below. These drops are intentionally rerunnable for existing projects.
+drop function if exists public.get_public_messages(text);
+drop function if exists public.get_public_pet(text);
+drop function if exists public.get_public_pet_v2(text);
+drop function if exists public.get_public_messages_v2(text);
+drop function if exists public.get_public_messages_v3(text, text);
+drop function if exists public.get_public_messages_v4(text, text, text);
+drop function if exists public.send_public_message(text, text, double precision, double precision, double precision);
+drop function if exists public.send_public_reply(text, uuid, text, double precision, double precision, double precision);
+drop function if exists public.mark_public_messages_seen(text);
+
 create table if not exists public.pets (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -152,20 +164,6 @@ drop policy if exists "owners can manage their owner profile" on public.owner_pr
 create policy "owners can manage their owner profile" on public.owner_profiles for all
   using (auth.uid() = id) with check (auth.uid() = id);
 
--- Do not grant anon SELECT on pets: that would expose owner_id and private notes.
--- Scanners receive only this deliberately limited response through the function.
-create or replace function public.get_public_pet(p_token text)
-returns table (public_token text, name text, species text, breed text, age text, note text, public_photo boolean, public_note boolean, missing boolean)
-language sql security definer set search_path = public
-as $$
-  select p.public_token, p.name, p.species, p.breed, p.age,
-    case when p.public_note then p.note else '' end,
-    p.public_photo, p.public_note, p.missing
-  from public.pets p where p.public_token = p_token limit 1;
-$$;
-revoke all on function public.get_public_pet(text) from public;
-grant execute on function public.get_public_pet(text) to anon, authenticated;
-
 alter table public.pets add column if not exists photo_url text;
 insert into storage.buckets (id, name, public) values ('reunite-media', 'reunite-media', true) on conflict (id) do nothing;
 drop policy if exists "owners can upload pet photos" on storage.objects;
@@ -177,19 +175,6 @@ create policy "owners can update pet photos" on storage.objects for update to au
   using (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "public can view Reunite pet photos" on storage.objects for select to public
   using (bucket_id = 'reunite-media');
-
-create or replace function public.get_public_pet_v2(p_token text)
-returns table (public_token text, name text, species text, breed text, age text, note text, public_photo boolean, public_note boolean, missing boolean, photo_url text)
-language sql security definer set search_path = public
-as $$
-  select p.public_token, p.name, p.species, p.breed, p.age,
-    case when p.public_note then p.note else '' end,
-    p.public_photo, p.public_note, p.missing,
-    case when p.public_photo then p.photo_url else null end
-  from public.pets p where p.public_token = p_token limit 1;
-$$;
-revoke all on function public.get_public_pet_v2(text) from public;
-grant execute on function public.get_public_pet_v2(text) to anon, authenticated;
 
 create or replace function public.get_public_pet_v3(p_token text)
 returns table (public_token text, name text, species text, breed text, age text, note text, public_photo boolean, public_note boolean, missing boolean, photo_url text, owner_username text, owner_name text, owner_avatar_url text, owner_bio text, owner_city text, owner_reunion_note text)
@@ -212,56 +197,6 @@ $$;
 revoke all on function public.get_public_pet_v3(text) from public;
 grant execute on function public.get_public_pet_v3(text) to anon, authenticated;
 
-drop function if exists public.send_public_message(text, text);
-create or replace function public.send_public_message(p_token text, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
-returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_pet public.pets;
-  v_conversation uuid;
-  v_body text := btrim(coalesce(p_body, ''));
-begin
-  if char_length(v_body) < 1 or char_length(v_body) > 2000 then
-    raise exception 'Message must be between 1 and 2000 characters';
-  end if;
-  select * into v_pet from public.pets where public_token = p_token limit 1;
-  if v_pet.id is null then raise exception 'Pet profile not found'; end if;
-  if (select count(*) from public.messages m join public.conversations c on c.id = m.conversation_id
-      where c.pet_id = v_pet.id and m.sender_role = 'finder' and m.created_at > now() - interval '1 hour') >= 10 then
-    raise exception 'This profile has reached its message limit for now. Please try again later.';
-  end if;
-  insert into public.conversations (pet_id, owner_id)
-    values (v_pet.id, v_pet.owner_id) returning id into v_conversation;
-  insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy)
-    values (v_conversation, 'finder', v_body, p_lat, p_lng, p_accuracy);
-  return v_conversation;
-end;
-$$;
-revoke all on function public.send_public_message(text, text, double precision, double precision, double precision) from public;
-grant execute on function public.send_public_message(text, text, double precision, double precision, double precision) to anon, authenticated;
-
-create or replace function public.mark_public_messages_seen(p_token text)
-returns void
-language sql
-security definer
-set search_path = public
-as $$
-  update public.messages m
-    set delivered_at = coalesce(m.delivered_at, now()),
-        seen_at = coalesce(m.seen_at, now())
-    where m.sender_role = 'owner'
-      and exists (
-        select 1 from public.conversations c
-        join public.pets p on p.id = c.pet_id
-        where c.id = m.conversation_id and p.public_token = p_token
-      );
-$$;
-revoke all on function public.mark_public_messages_seen(text) from public;
-grant execute on function public.mark_public_messages_seen(text) to anon, authenticated;
-
 create or replace function public.mark_public_messages_seen_v2(p_token text, p_device_id text)
 returns void
 language sql
@@ -275,50 +210,6 @@ as $$
 $$;
 revoke all on function public.mark_public_messages_seen_v2(text, text) from public;
 grant execute on function public.mark_public_messages_seen_v2(text, text) to anon, authenticated;
-
-create or replace function public.get_public_messages_v2(p_token text)
-returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
-language sql
-security definer
-set search_path = public
-as $$
-  select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
-  from public.messages m
-  join public.conversations c on c.id = m.conversation_id
-  join public.pets p on p.id = c.pet_id
-  where p.public_token = p_token
-    and c.expires_at > now()
-  order by m.created_at asc;
-$$;
-revoke all on function public.get_public_messages_v2(text) from public;
-grant execute on function public.get_public_messages_v2(text) to anon, authenticated;
-
-create or replace function public.send_public_reply(p_token text, p_conversation uuid, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_pet_id uuid;
-begin
-  if char_length(btrim(coalesce(p_body, ''))) < 1 or char_length(btrim(coalesce(p_body, ''))) > 2000 then
-    raise exception 'Message must be between 1 and 2000 characters';
-  end if;
-  select p.id into v_pet_id
-  from public.pets p
-  join public.conversations c on c.pet_id = p.id
-  where p.public_token = p_token and c.id = p_conversation and c.expires_at > now();
-  if v_pet_id is null then raise exception 'Conversation not found or expired'; end if;
-  if (select count(*) from public.messages m where m.conversation_id = p_conversation and m.created_at > now() - interval '1 hour') >= 20 then
-    raise exception 'Message limit reached for this conversation';
-  end if;
-  insert into public.messages (conversation_id, sender_role, body, location_lat, location_lng, location_accuracy)
-    values (p_conversation, 'finder', btrim(p_body), p_lat, p_lng, p_accuracy);
-end;
-$$;
-revoke all on function public.send_public_reply(text, uuid, text, double precision, double precision, double precision) from public;
-grant execute on function public.send_public_reply(text, uuid, text, double precision, double precision, double precision) to anon, authenticated;
 
 create or replace function public.send_public_message_v2(p_token text, p_device_id text, p_body text, p_lat double precision default null, p_lng double precision default null, p_accuracy double precision default null)
 returns uuid
@@ -366,41 +257,6 @@ end;
 $$;
 revoke all on function public.send_public_reply_v2(text, text, uuid, text, double precision, double precision, double precision) from public;
 grant execute on function public.send_public_reply_v2(text, text, uuid, text, double precision, double precision, double precision) to anon, authenticated;
-
-create or replace function public.get_public_messages_v3(p_token text, p_device_id text)
-returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
-language sql
-security definer
-set search_path = public
-as $$
-  select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
-  from public.messages m join public.conversations c on c.id = m.conversation_id join public.pets p on p.id = c.pet_id
-  where p.public_token = p_token and c.finder_device_id = p_device_id and c.expires_at > now()
-  order by m.created_at asc;
-$$;
-revoke all on function public.get_public_messages_v3(text, text) from public;
-grant execute on function public.get_public_messages_v3(text, text) to anon, authenticated;
-
-create or replace function public.get_public_messages_v4(p_token text, p_device_id text, p_session_id text default null)
-returns table(id uuid, conversation_id uuid, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if p_session_id is not null and p_session_id <> p_device_id then
-    update public.conversations set expires_at = now() where finder_device_id = p_session_id and exists (select 1 from public.pets p where p.id = pet_id and p.public_token = p_token) and expires_at > now();
-    return;
-  end if;
-  return query
-    select m.id, m.conversation_id, m.sender_role, m.body, m.created_at, m.delivered_at, m.seen_at
-    from public.messages m join public.conversations c on c.id = m.conversation_id join public.pets p on p.id = c.pet_id
-    where p.public_token = p_token and c.finder_device_id = p_device_id and c.blocked_at is null and c.expires_at > now()
-    order by m.created_at asc;
-end;
-$$;
-revoke all on function public.get_public_messages_v4(text, text, text) from public;
-grant execute on function public.get_public_messages_v4(text, text, text) to anon, authenticated;
 
 create or replace function public.get_public_messages_v5(p_token text, p_device_id text, p_session_id text default null)
 returns table(id uuid, conversation_id uuid, request_status text, sender_role text, body text, created_at timestamptz, delivered_at timestamptz, seen_at timestamptz)
