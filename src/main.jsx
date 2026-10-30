@@ -72,6 +72,12 @@ function clearLocalOwnerCache() {
   } catch {}
 }
 
+function getReuniteMediaPath(url) {
+  const marker = '/storage/v1/object/public/reunite-media/'
+  if (!url?.includes(marker)) return null
+  return decodeURIComponent(url.split(marker)[1] || '') || null
+}
+
 function ownerInitials(profile) {
   const source = profile?.username || profile?.full_name || 'LR'
   return source.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'LR'
@@ -204,11 +210,20 @@ function App() {
   const update = (key, value) => { setPet(current => ({ ...current, [key]: value })); setSaved(false); setProfileDirty(true) }
   const saveProfile = async () => {
     if (supabase && cloudUser) {
-      const payload = { owner_id: cloudUser.id, name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, note: pet.note, public_photo: pet.publicPhoto, public_note: pet.publicNote, missing: pet.missing, photo_url: pet.photo_url || null }
+      let photoUrl = pet.photo_url || null
+      if (!pet.publicPhoto && photoUrl) {
+        const oldPath = getReuniteMediaPath(photoUrl)
+        if (oldPath) {
+          const { error: removeError } = await supabase.storage.from('reunite-media').remove([oldPath])
+          if (removeError) { setAuthError('The photo could not be made private. Please try again.'); notify('error', 'The photo visibility could not be updated.'); return }
+          photoUrl = null
+        }
+      }
+      const payload = { owner_id: cloudUser.id, name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, note: pet.note, public_photo: pet.publicPhoto, public_note: pet.publicNote, missing: pet.missing, photo_url: pet.publicPhoto ? photoUrl : null }
       const query = pet._dbId ? supabase.from('pets').update(payload).eq('id', pet._dbId).select().single() : supabase.from('pets').insert(payload).select().single()
       const { data, error } = await query
       if (error) { setAuthError(error.message); notify('error', 'Your profile could not be saved.'); return }
-      const updated = { ...data, id: data.public_token, _dbId: data.id, photo: data.photo_url || pet.photo || '🐕', publicPhoto: data.public_photo, publicNote: data.public_note }
+      const updated = { ...data, id: data.public_token, _dbId: data.id, photo: data.photo_url || '🐕', publicPhoto: data.public_photo, publicNote: data.public_note }
       setPet(updated); setPets(current => current.map(item => item._dbId === updated._dbId ? updated : item))
     } else {
       setPets(current => current.map(item => item.id === pet.id ? pet : item))
@@ -257,7 +272,7 @@ function App() {
   const signOut = async () => { await supabase?.auth.signOut(); clearLocalOwnerCache(); setCloudUser(null); setPets([seedPet]); setPet(seedPet); setOwnerProfile(emptyOwnerProfile); setInbox([]); setAuthError('') }
   const uploadPhoto = async (file) => {
     if (!file || !supabase || !cloudUser || !pet._dbId) return
-    if (!file.type.startsWith('image/')) { setAuthError('Please choose an image file.'); return }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setAuthError('Please choose a JPG, PNG, or WEBP image.'); return }
     if (file.size > 5 * 1024 * 1024) { setAuthError('Please choose an image smaller than 5 MB.'); return }
     setAuthError('Uploading photo…')
     const safeFile = await prepareImage(file)

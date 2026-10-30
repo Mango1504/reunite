@@ -166,12 +166,16 @@ create policy "owners can manage their owner profile" on public.owner_profiles f
 
 alter table public.pets add column if not exists photo_url text;
 insert into storage.buckets (id, name, public) values ('reunite-media', 'reunite-media', true) on conflict (id) do nothing;
+update storage.buckets set file_size_limit = 5242880, allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp']::text[] where id = 'reunite-media';
 drop policy if exists "owners can upload pet photos" on storage.objects;
 drop policy if exists "owners can update pet photos" on storage.objects;
+drop policy if exists "owners can delete pet photos" on storage.objects;
 drop policy if exists "public can view Reunite pet photos" on storage.objects;
 create policy "owners can upload pet photos" on storage.objects for insert to authenticated
   with check (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "owners can update pet photos" on storage.objects for update to authenticated
+  using (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "owners can delete pet photos" on storage.objects for delete to authenticated
   using (bucket_id = 'reunite-media' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "public can view Reunite pet photos" on storage.objects for select to public
   using (bucket_id = 'reunite-media');
