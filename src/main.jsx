@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { isCloudMode, supabase } from './lib/supabase'
+import { validatePassword } from './security'
 import './styles.css'
 import './retention.css'
 import './boop-theme.css'
@@ -244,7 +245,8 @@ function App() {
     }
   }
   const authenticate = async (mode, email, password) => {
-    if (password.length < 8) { setAuthError('Use at least 8 characters for your password.'); return }
+    const passwordError = validatePassword(password)
+    if (passwordError) { setAuthError(passwordError); return }
     setAuthBusy(true); setAuthError(''); setAuthMessage('')
     try {
       const authRedirect = `${location.origin}${location.pathname}`
@@ -604,9 +606,9 @@ function ScanPageRealtime({ pet, message, setMessage, sent, setSent, sendFinderM
     if (!supabase) return undefined
     let active = true
     if (sessionMismatch) { setError('This finder session was opened on another device and has expired. Scan the pet QR again to start a new session.'); return undefined }
-    const load = async () => { const { data, error: loadError } = await supabase.rpc('get_public_messages_v5', { p_token: token, p_device_id: deviceId, p_session_id: sessionId }); if (active && !loadError) { setMessages(data || []); const latest = (data || []).at(-1); if (latest?.conversation_id) { setConversationId(current => current || latest.conversation_id); setRequestStatus(latest.request_status); setSent(true) } if ((data || []).some(item => item.sender_role === 'owner')) supabase.rpc('mark_public_messages_seen', { p_token: token }) } }
+    const load = async () => { const { data, error: loadError } = await supabase.rpc('get_public_messages_v5', { p_token: token, p_device_id: deviceId, p_session_id: sessionId }); if (active && !loadError) { setMessages(data || []); const latest = (data || []).at(-1); if (latest?.conversation_id) { setConversationId(current => current || latest.conversation_id); setRequestStatus(latest.request_status); setSent(true) } if ((data || []).some(item => item.sender_role === 'owner')) supabase.rpc('mark_public_messages_seen_v2', { p_token: token, p_device_id: deviceId }) } }
     load()
-    const channel = supabase.channel(`pet:${token}:${deviceId}`).on('broadcast', { event: 'message' }, ({ payload }) => { const incoming = payload?.record; if (!active || !incoming?.id) return; setMessages(current => current.some(item => item.id === incoming.id) ? current : [...current, incoming].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))); if (incoming.sender_role === 'owner') supabase.rpc('mark_public_messages_seen', { p_token: token }) }).subscribe()
+    const channel = supabase.channel(`pet:${token}:${deviceId}`).on('broadcast', { event: 'message' }, ({ payload }) => { const incoming = payload?.record; if (!active || !incoming?.id) return; setMessages(current => current.some(item => item.id === incoming.id) ? current : [...current, incoming].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))); if (incoming.sender_role === 'owner') supabase.rpc('mark_public_messages_seen_v2', { p_token: token, p_device_id: deviceId }) }).subscribe()
     const timer = window.setInterval(load, 30000)
     return () => { active = false; window.clearInterval(timer); supabase.removeChannel(channel) }
   }, [token, deviceId, sessionId, sessionMismatch])
