@@ -17,7 +17,7 @@ This checklist tracks fixes that have been implemented, deployed, and verified. 
 - [x] Add complete account deletion and reconcile retention wording with database behavior. UI/privacy code is live in `234385b`; user confirmed `20261030_add_account_deletion.sql` ran in Supabase.
 - [ ] Add security headers and connect the stable production domain. Security headers are deployed in `fad1813`; a custom domain is still pending because no domain has been provided/configured.
 - [x] Remove obsolete active UI/API code paths and add automated auth/messaging tests. The live finder flow now uses only device-scoped v2/v5 APIs; CI coverage was added in `fac4484`, and the deployment is live.
-- [ ] Complete dependency vulnerability auditing in CI.
+- [x] Complete dependency vulnerability auditing in CI. `npm audit --omit=dev` reports 0 vulnerabilities locally, and the audit is now part of GitHub Actions.
 
 ## P2 — polish
 
